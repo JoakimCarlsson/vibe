@@ -11,7 +11,7 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions,
+  useAnimatedValue,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -70,30 +70,6 @@ async function forgeApp(wish: string): Promise<string> {
   return code;
 }
 
-/** Faint background grid that fades out toward the edges. */
-function GridBackdrop() {
-  const { width, height } = useWindowDimensions();
-  const cell = 46;
-  const cols = Math.ceil(width / cell);
-  const rows = Math.ceil(height / cell);
-  return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      {Array.from({ length: cols }, (_, i) => (
-        <View
-          key={`v${i}`}
-          style={[styles.gridLine, { left: i * cell, top: 0, bottom: 0, width: 1 }]}
-        />
-      ))}
-      {Array.from({ length: rows }, (_, i) => (
-        <View
-          key={`h${i}`}
-          style={[styles.gridLine, { top: i * cell, left: 0, right: 0, height: 1 }]}
-        />
-      ))}
-    </View>
-  );
-}
-
 /** Staggered rise-in wrapper, mirrors the landing entrance animation. */
 function Rise({
   delay,
@@ -104,7 +80,7 @@ function Rise({
   style?: object;
   children: React.ReactNode;
 }) {
-  const v = useRef(new Animated.Value(0)).current;
+  const v = useAnimatedValue(0);
   useEffect(() => {
     Animated.timing(v, {
       toValue: 1,
@@ -132,7 +108,7 @@ function Rise({
 
 /** The sliding spark progress bar. */
 function Spark() {
-  const x = useRef(new Animated.Value(0)).current;
+  const x = useAnimatedValue(0);
   useEffect(() => {
     Animated.loop(
       Animated.timing(x, {
@@ -227,7 +203,6 @@ export default function ForgeScreen() {
 
   return (
     <View style={styles.root}>
-      <GridBackdrop />
       <SafeAreaView style={styles.safe}>
         {phase === 'landing' && (
           <KeyboardAvoidingView
@@ -276,7 +251,7 @@ export default function ForgeScreen() {
               <View style={styles.req}>
                 <Text style={styles.reqLabel}>BUILT FROM</Text>
                 <Text style={styles.reqText} numberOfLines={1}>
-                  "{builtFrom}"
+                  &ldquo;{builtFrom}&rdquo;
                 </Text>
               </View>
               <View style={styles.toggle}>
@@ -334,7 +309,6 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
   fullWidth: { alignSelf: 'stretch' },
   safe: { flex: 1 },
-  gridLine: { position: 'absolute', backgroundColor: C.line, opacity: 0.5 },
 
   // landing
   shell: {
