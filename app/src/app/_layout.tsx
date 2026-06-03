@@ -16,7 +16,9 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
 
-const BG = '#0d0b07';
+import { colors } from '@/theme';
+
+const BG = colors.bg;
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({

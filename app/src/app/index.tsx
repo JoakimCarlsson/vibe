@@ -16,17 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
-const C = {
-  bg: '#0d0b07',
-  panel: '#15120c',
-  ink: '#f4efe3',
-  muted: '#8c8472',
-  line: '#2a2519',
-  accent: '#d6ff2b',
-  accentDim: '#9bb820',
-  warn: '#ff6b4a',
-  placeholder: '#5f5949',
-};
+import { colors as C, fonts } from '@/theme';
 
 const STATUS_STEPS = [
   'sending your request to Claude',
@@ -354,7 +344,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   brand: {
-    fontFamily: 'SpaceMono_400Regular',
+    fontFamily: fonts.mono,
     fontSize: 12,
     letterSpacing: 6,
     color: C.accentDim,
@@ -363,7 +353,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   h1: {
-    fontFamily: 'Fraunces_300Light',
+    fontFamily: fonts.serif,
     fontSize: 42,
     lineHeight: 44,
     letterSpacing: -0.8,
@@ -372,7 +362,7 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   h1Em: {
-    fontFamily: 'Fraunces_400Regular_Italic',
+    fontFamily: fonts.serifItalic,
     color: C.accent,
   },
   bar: {
@@ -389,7 +379,7 @@ const styles = StyleSheet.create({
     borderColor: C.line,
     borderRadius: 14,
     color: C.ink,
-    fontFamily: 'HankenGrotesk_400Regular',
+    fontFamily: fonts.sans,
     fontSize: 16,
     paddingHorizontal: 18,
     paddingVertical: 16,
@@ -401,12 +391,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  goPressed: { backgroundColor: '#e6ff5e' },
+  goPressed: { backgroundColor: C.accentBright },
   goText: {
-    fontFamily: 'SpaceMono_700Bold',
+    fontFamily: fonts.monoBold,
     fontSize: 13,
     letterSpacing: 0.7,
-    color: '#15120c',
+    color: C.onAccent,
   },
   // loading
   loading: {
@@ -417,7 +407,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   anvil: {
-    fontFamily: 'Fraunces_300Light',
+    fontFamily: fonts.serif,
     fontSize: 24,
     color: C.ink,
   },
@@ -437,7 +427,7 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   status: {
-    fontFamily: 'SpaceMono_400Regular',
+    fontFamily: fonts.mono,
     fontSize: 12,
     color: C.muted,
     letterSpacing: 0.6,
@@ -457,13 +447,13 @@ const styles = StyleSheet.create({
   },
   req: { flex: 1 },
   reqLabel: {
-    fontFamily: 'SpaceMono_400Regular',
+    fontFamily: fonts.mono,
     fontSize: 10,
     letterSpacing: 1.2,
     color: C.accentDim,
   },
   reqText: {
-    fontFamily: 'HankenGrotesk_400Regular',
+    fontFamily: fonts.sans,
     fontSize: 13,
     color: C.ink,
   },
@@ -477,11 +467,11 @@ const styles = StyleSheet.create({
   toggleBtn: { paddingHorizontal: 12, paddingVertical: 8 },
   toggleOn: { backgroundColor: C.accent },
   toggleText: {
-    fontFamily: 'SpaceMono_400Regular',
+    fontFamily: fonts.mono,
     fontSize: 12,
     color: C.muted,
   },
-  toggleTextOn: { color: '#15120c' },
+  toggleTextOn: { color: C.onAccent },
   newBtn: {
     borderWidth: 1,
     borderColor: C.line,
@@ -490,18 +480,18 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   newBtnText: {
-    fontFamily: 'SpaceMono_400Regular',
+    fontFamily: fonts.mono,
     fontSize: 12,
     color: C.ink,
   },
-  stage: { flex: 1, backgroundColor: '#fff' },
+  stage: { flex: 1, backgroundColor: C.stage },
   webview: { flex: 1 },
   sourceScroll: { flex: 1, backgroundColor: C.bg },
   sourceText: {
-    fontFamily: 'SpaceMono_400Regular',
+    fontFamily: fonts.mono,
     fontSize: 12.5,
     lineHeight: 20,
-    color: '#cfe87a',
+    color: C.code,
     padding: 20,
   },
 });
