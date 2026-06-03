@@ -11,32 +11,35 @@ import (
 	"github.com/joakimcarlsson/minmux/openapi"
 	"github.com/joakimcarlsson/minmux/router"
 	"github.com/joakimcarlsson/vibe/internal/config"
+	"github.com/joakimcarlsson/vibe/internal/generator"
 	"github.com/joakimcarlsson/vibe/internal/otel"
 )
 
 // Server owns the router, OpenAPI generator, and the underlying http.Server.
 type Server struct {
-	cfg    config.Config
-	router *router.Router
-	http   *http.Server
+	cfg       config.Config
+	router    *router.Router
+	http      *http.Server
+	generator *generator.Service
 }
 
 // NewServer constructs a Server, registers all routes, and wires up the
 // OpenAPI spec and docs endpoints.
-func NewServer(cfg config.Config) *Server {
+func NewServer(cfg config.Config, gen *generator.Service) *Server {
 	r := router.New()
 	r.Use(router.Recover())
 
-	gen := openapi.NewGenerator(openapi.Info{
+	specGen := openapi.NewGenerator(openapi.Info{
 		Title:   "vibe API",
 		Version: "0.1.0",
 	})
 
-	s := &Server{cfg: cfg, router: r}
+	s := &Server{cfg: cfg, router: r, generator: gen}
 
 	s.registerHealth()
+	s.registerGenerate()
 
-	r.HandleFunc(http.MethodGet, "/openapi.json", gen.Handler(r))
+	r.HandleFunc(http.MethodGet, "/openapi.json", specGen.Handler(r))
 	registerDocs(r)
 
 	s.http = &http.Server{

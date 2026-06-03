@@ -1,0 +1,36 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+group = 'expo.modules.vibehermes'
+version = '0.1.0'
+
+android {
+  namespace 'expo.modules.vibehermes'
+  compileSdk 35
+
+  defaultConfig {
+    minSdk 24
+    externalNativeBuild {
+      cmake {
+        cppFlags '-std=c++20 -fexceptions -frtti'
+        arguments '-DANDROID_STL=c++_shared'
+      }
+    }
+  }
+
+  externalNativeBuild {
+    cmake {
+      path 'src/main/cpp/CMakeLists.txt'
+    }
+  }
+
+  buildFeatures {
+    prefab true
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation "com.facebook.react:react-android"
+  implementation "com.facebook.react:hermes-android"
+}

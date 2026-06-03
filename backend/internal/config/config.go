@@ -10,9 +10,21 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	Server ServerConfig
-	OTel   OTelConfig
-	Log    LogConfig
+	Server    ServerConfig
+	OTel      OTelConfig
+	Log       LogConfig
+	Generator GeneratorConfig
+}
+
+// GeneratorConfig holds app-generation settings.
+type GeneratorConfig struct {
+	// AnthropicAPIKey authenticates against the Anthropic API.
+	AnthropicAPIKey string
+	// HermescPath points at the hermesc binary used to validate generated
+	// code against the app's Hermes engine. Empty disables the check.
+	HermescPath string
+	// MaxAttempts bounds the generate→compile→retry loop.
+	MaxAttempts int
 }
 
 // ServerConfig holds HTTP server settings.
@@ -54,6 +66,11 @@ func Load() (Config, error) {
 		Log: LogConfig{
 			Level:  getEnv("LOG_LEVEL", "info"),
 			Format: getEnv("LOG_FORMAT", "json"),
+		},
+		Generator: GeneratorConfig{
+			AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
+			HermescPath:     os.Getenv("HERMESC_PATH"),
+			MaxAttempts:     getEnvInt("GENERATOR_MAX_ATTEMPTS", 3),
 		},
 	}
 

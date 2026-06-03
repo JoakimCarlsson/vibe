@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/joakimcarlsson/vibe/internal/config"
+	"github.com/joakimcarlsson/vibe/internal/generator"
 	"github.com/joakimcarlsson/vibe/internal/httpx"
 	"github.com/joakimcarlsson/vibe/internal/otel"
 )
@@ -50,7 +51,12 @@ func run() error {
 		}
 	}()
 
-	srv := httpx.NewServer(cfg)
+	gen, err := generator.New(cfg.Generator)
+	if err != nil {
+		return fmt.Errorf("setup generator: %w", err)
+	}
+
+	srv := httpx.NewServer(cfg, gen)
 
 	serverErr := make(chan error, 1)
 	go func() {

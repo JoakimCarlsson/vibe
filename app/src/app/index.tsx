@@ -14,60 +14,37 @@ import {
   useAnimatedValue,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
 
+import { GeneratedApp } from '@/components/generated-app';
+import { API_URL } from '@/lib/api';
 import { colors as C, fonts } from '@/theme';
 
 const STATUS_STEPS = [
-  'sending your request to Claude',
-  'Claude is writing the code',
-  'assembling a self-contained app',
-  'wiring up the interactions',
-  'rendering it live',
+  'sending your wish to the forge',
+  'Claude is writing React Native',
+  'transpiling with esbuild',
+  'validating against hermes',
+  'mounting it natively',
 ];
-
-const SYSTEM_PROMPT =
-  'You are an app builder. The user describes an app they want. ' +
-  'Respond with ONE complete, self-contained HTML document and NOTHING else — no explanation, no markdown fences. ' +
-  'Inline all CSS in a <style> tag and all JS in a <script> tag. Do not load external resources. ' +
-  'It must be fully functional and interactive on its own. Keep it compact but polished: clean layout, ' +
-  'good spacing, a considered color palette, and working logic. It will be rendered inside a mobile WebView, ' +
-  'so design for a phone-sized touch screen. Start your response with <!DOCTYPE html>.';
 
 type Phase = 'landing' | 'loading' | 'result';
 
-async function forgeApp(wish: string): Promise<string> {
-  const apiKey = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY;
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+type ForgedApp = { tsx: string; hbc: string };
+
+async function forgeApp(wish: string): Promise<ForgedApp> {
+  const res = await fetch(`${API_URL}/api/v1/generate`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'anthropic-version': '2023-06-01',
-      ...(apiKey
-        ? {
-            'x-api-key': apiKey,
-            'anthropic-dangerous-direct-browser-access': 'true',
-          }
-        : {}),
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8192,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: wish }],
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: wish }),
   });
   const data = await res.json();
-  let code = (data.content ?? [])
-    .filter((b: { type: string }) => b.type === 'text')
-    .map((b: { text: string }) => b.text)
-    .join('')
-    .trim();
-  code = code.replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/i, '').trim();
-  if (!code || !code.includes('<')) {
-    throw new Error(data.error?.message ?? 'empty response');
+  if (!res.ok) {
+    throw new Error(data?.detail ?? data?.title ?? `backend returned ${res.status}`);
   }
-  return code;
+  if (!data.hbc || !data.tsx) {
+    throw new Error('backend returned an empty app');
+  }
+  return { tsx: data.tsx, hbc: data.hbc };
 }
 
 /** Staggered rise-in wrapper, mirrors the landing entrance animation. */
@@ -169,7 +146,7 @@ export default function ForgeScreen() {
   const [phase, setPhase] = useState<Phase>('landing');
   const [wish, setWish] = useState('');
   const [builtFrom, setBuiltFrom] = useState('');
-  const [code, setCode] = useState('');
+  const [app, setApp] = useState<ForgedApp | null>(null);
   const [view, setView] = useState<'preview' | 'source'>('preview');
   const inputRef = useRef<TextInput>(null);
 
@@ -181,9 +158,9 @@ export default function ForgeScreen() {
     }
     setPhase('loading');
     try {
-      const html = await forgeApp(w);
+      const forged = await forgeApp(w);
       setBuiltFrom(w);
-      setCode(html);
+      setApp(forged);
       setView('preview');
       setPhase('result');
     } catch (err) {
@@ -284,16 +261,11 @@ export default function ForgeScreen() {
             </View>
             <View style={styles.stage}>
               {view === 'preview' ? (
-                <WebView
-                  originWhitelist={['*']}
-                  source={{ html: code }}
-                  style={styles.webview}
-                  javaScriptEnabled
-                />
+                app && <GeneratedApp hbc={app.hbc} />
               ) : (
                 <ScrollView style={styles.sourceScroll}>
                   <Text style={styles.sourceText} selectable>
-                    {code}
+                    {app?.tsx}
                   </Text>
                 </ScrollView>
               )}
@@ -459,7 +431,6 @@ const styles = StyleSheet.create({
     color: C.ink,
   },
   stage: { flex: 1, backgroundColor: C.stage },
-  webview: { flex: 1 },
   sourceScroll: { flex: 1, backgroundColor: C.bg },
   sourceText: {
     fontFamily: fonts.mono,
