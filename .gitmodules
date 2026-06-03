@@ -1,0 +1,6 @@
+[submodule "backend/deps/minmux"]
+	path = backend/deps/minmux
+	url = https://github.com/JoakimCarlsson/minmux
+[submodule "backend/deps/ai"]
+	path = backend/deps/ai
+	url = https://github.com/JoakimCarlsson/ai

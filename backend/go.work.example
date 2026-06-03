@@ -1,0 +1,11 @@
+go 1.26.3
+
+// Local development workspace: builds the backend against the minmux
+// submodule checkout in deps/minmux. Copy this to go.work (which is
+// gitignored) to use it.
+use (
+	.
+	./deps/minmux/router
+	./deps/minmux/openapi
+	./deps/minmux/scalar
+)
