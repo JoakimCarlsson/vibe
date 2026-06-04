@@ -5,7 +5,6 @@ import {
   Easing,
   Keyboard,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -30,11 +29,11 @@ type Phase = 'landing' | 'loading' | 'result';
 
 type ForgedApp = { tsx: string; hbc: string };
 
-async function forgeApp(wish: string): Promise<ForgedApp> {
+async function forgeApp(wish: string, code?: string): Promise<ForgedApp> {
   const res = await fetch(`${API_URL}/api/v1/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: wish }),
+    body: JSON.stringify({ prompt: wish, code }),
   });
   const data = await res.json();
   if (!res.ok) {
@@ -144,11 +143,13 @@ function LoadingView() {
 export default function ForgeScreen() {
   const [phase, setPhase] = useState<Phase>('landing');
   const [wish, setWish] = useState('');
-  const [builtFrom, setBuiltFrom] = useState('');
   const [app, setApp] = useState<ForgedApp | null>(null);
-  const [view, setView] = useState<'preview' | 'source'>('preview');
+  const [fabOpen, setFabOpen] = useState(false);
+  const [chatting, setChatting] = useState(false);
+  const [chatText, setChatText] = useState('');
   const [kbHeight, setKbHeight] = useState(0);
   const inputRef = useRef<TextInput>(null);
+  const chatRef = useRef<TextInput>(null);
 
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (e) =>
@@ -161,21 +162,21 @@ export default function ForgeScreen() {
     };
   }, []);
 
-  async function forge() {
-    const w = wish.trim();
-    if (!w) {
-      inputRef.current?.focus();
-      return;
-    }
+  // generate builds a fresh app (code omitted) or edits the current one.
+  async function generate(prompt: string, code?: string) {
+    const w = prompt.trim();
+    if (!w) return;
+    const returnTo: Phase = phase;
     setPhase('loading');
     try {
-      const forged = await forgeApp(w);
-      setBuiltFrom(w);
+      const forged = await forgeApp(w, code);
       setApp(forged);
-      setView('preview');
+      setChatting(false);
+      setChatText('');
+      setFabOpen(false);
       setPhase('result');
     } catch (err) {
-      setPhase('landing');
+      setPhase(returnTo);
       Alert.alert(
         "Couldn't build that one",
         'The model call failed or returned nothing. Try again or rephrase.\n\n' +
@@ -184,8 +185,19 @@ export default function ForgeScreen() {
     }
   }
 
+  function forge() {
+    if (!wish.trim()) {
+      inputRef.current?.focus();
+      return;
+    }
+    generate(wish);
+  }
+
   function reset() {
     setWish('');
+    setChatText('');
+    setChatting(false);
+    setFabOpen(false);
     setPhase('landing');
   }
 
@@ -233,51 +245,49 @@ export default function ForgeScreen() {
 
         {phase === 'result' && (
           <View style={styles.result}>
-            <View style={styles.topbar}>
-              <View style={styles.req}>
-                <Text style={styles.reqLabel}>BUILT FROM</Text>
-                <Text style={styles.reqText} numberOfLines={1}>
-                  &ldquo;{builtFrom}&rdquo;
-                </Text>
-              </View>
-              <View style={styles.toggle}>
+            <View style={styles.stage}>{app && <GeneratedApp hbc={app.hbc} />}</View>
+
+            {chatting && (
+              <View style={[styles.chatBar, { bottom: 16 + kbHeight }]}>
+                <TextInput
+                  ref={chatRef}
+                  style={styles.chatInput}
+                  value={chatText}
+                  onChangeText={setChatText}
+                  placeholder="Describe a change…"
+                  placeholderTextColor={C.placeholder}
+                  returnKeyType="send"
+                  onSubmitEditing={() => generate(chatText, app?.tsx)}
+                  autoFocus
+                />
                 <Pressable
-                  style={[styles.toggleBtn, view === 'preview' && styles.toggleOn]}
-                  onPress={() => setView('preview')}>
-                  <Text
-                    style={[
-                      styles.toggleText,
-                      view === 'preview' && styles.toggleTextOn,
-                    ]}>
-                    preview
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.toggleBtn, view === 'source' && styles.toggleOn]}
-                  onPress={() => setView('source')}>
-                  <Text
-                    style={[
-                      styles.toggleText,
-                      view === 'source' && styles.toggleTextOn,
-                    ]}>
-                    source
-                  </Text>
+                  style={({ pressed }) => [styles.chatSend, pressed && styles.goPressed]}
+                  onPress={() => generate(chatText, app?.tsx)}>
+                  <Text style={styles.chatSendText}>→</Text>
                 </Pressable>
               </View>
-              <Pressable style={styles.newBtn} onPress={reset}>
-                <Text style={styles.newBtnText}>+ new</Text>
-              </Pressable>
-            </View>
-            <View style={styles.stage}>
-              {view === 'preview' ? (
-                app && <GeneratedApp hbc={app.hbc} />
-              ) : (
-                <ScrollView style={styles.sourceScroll}>
-                  <Text style={styles.sourceText} selectable>
-                    {app?.tsx}
-                  </Text>
-                </ScrollView>
+            )}
+
+            <View style={styles.fabWrap} pointerEvents="box-none">
+              {fabOpen && (
+                <View style={styles.fabMenu}>
+                  <Pressable
+                    style={styles.fabItem}
+                    onPress={() => {
+                      setFabOpen(false);
+                      setChatting(true);
+                      setTimeout(() => chatRef.current?.focus(), 50);
+                    }}>
+                    <Text style={styles.fabItemText}>✦  Keep chatting</Text>
+                  </Pressable>
+                  <Pressable style={styles.fabItem} onPress={reset}>
+                    <Text style={styles.fabItemText}>←  Go home</Text>
+                  </Pressable>
+                </View>
               )}
+              <Pressable style={styles.fab} onPress={() => setFabOpen((o) => !o)}>
+                <Text style={styles.fabIcon}>{fabOpen ? '×' : '◆'}</Text>
+              </Pressable>
             </View>
           </View>
         )}
@@ -390,62 +400,79 @@ const styles = StyleSheet.create({
 
   // result
   result: { flex: 1 },
-  topbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.line,
-    backgroundColor: C.panel,
-  },
-  req: { flex: 1 },
-  reqLabel: {
-    fontFamily: fonts.mono,
-    fontSize: 10,
-    letterSpacing: 1.2,
-    color: C.accentDim,
-  },
-  reqText: {
-    fontFamily: fonts.sans,
-    fontSize: 13,
-    color: C.ink,
-  },
-  toggle: {
-    flexDirection: 'row',
-    borderWidth: 1,
-    borderColor: C.line,
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  toggleBtn: { paddingHorizontal: 12, paddingVertical: 8 },
-  toggleOn: { backgroundColor: C.accent },
-  toggleText: {
-    fontFamily: fonts.mono,
-    fontSize: 12,
-    color: C.muted,
-  },
-  toggleTextOn: { color: C.onAccent },
-  newBtn: {
-    borderWidth: 1,
-    borderColor: C.line,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
-  newBtnText: {
-    fontFamily: fonts.mono,
-    fontSize: 12,
-    color: C.ink,
-  },
   stage: { flex: 1, backgroundColor: C.stage },
-  sourceScroll: { flex: 1, backgroundColor: C.bg },
-  sourceText: {
-    fontFamily: fonts.mono,
-    fontSize: 12.5,
-    lineHeight: 20,
-    color: C.code,
-    padding: 20,
+
+  // floating action button (bottom-right)
+  fabWrap: {
+    position: 'absolute',
+    right: 20,
+    bottom: 28,
+    alignItems: 'flex-end',
+    gap: 10,
+  },
+  fab: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: C.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
+  },
+  fabIcon: {
+    fontFamily: fonts.serif,
+    fontSize: 22,
+    color: C.onAccent,
+  },
+  fabMenu: { gap: 8, alignItems: 'flex-end' },
+  fabItem: {
+    backgroundColor: C.panel,
+    borderWidth: 1,
+    borderColor: C.line,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  fabItemText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 14,
+    color: C.ink,
+  },
+
+  // chat-to-edit overlay
+  chatBar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  chatInput: {
+    flex: 1,
+    backgroundColor: C.panel,
+    borderWidth: 1,
+    borderColor: C.line,
+    borderRadius: 14,
+    color: C.ink,
+    fontFamily: fonts.sans,
+    fontSize: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  chatSend: {
+    width: 52,
+    backgroundColor: C.accent,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatSendText: {
+    fontFamily: fonts.monoBold,
+    fontSize: 20,
+    color: C.onAccent,
   },
 });

@@ -87,13 +87,14 @@ func New(cfg config.GeneratorConfig) (*Service, error) {
 }
 
 // Generate runs the full pipeline for one prompt.
-func (s *Service) Generate(ctx context.Context, userPrompt string) (*Result, error) {
+func (s *Service) Generate(ctx context.Context, userPrompt, currentCode string) (*Result, error) {
 	msgs := []message.Message{
 		message.NewSystemMessage(systemPrompt),
-		message.NewUserMessage(userPrompt),
+		message.NewUserMessage(buildUserMessage(userPrompt, currentCode)),
 	}
 
-	logger.InfoContext(ctx, "generation started", "prompt", userPrompt)
+	logger.InfoContext(ctx, "generation started",
+		"prompt", userPrompt, "edit", currentCode != "")
 
 	var lastErr error
 	for attempt := 1; attempt <= s.maxAttempts; attempt++ {
@@ -140,6 +141,17 @@ func (s *Service) Generate(ctx context.Context, userPrompt string) (*Result, err
 		"generated code failed to compile after %d attempts: %w",
 		s.maxAttempts, lastErr,
 	)
+}
+
+// buildUserMessage frames a fresh build as the prompt itself, or an edit as
+// the current component plus the requested change.
+func buildUserMessage(prompt, currentCode string) string {
+	if currentCode == "" {
+		return prompt
+	}
+	return "Here is the current component:\n\n```tsx\n" + currentCode +
+		"\n```\n\nApply this change and return the COMPLETE updated component, " +
+		"following all the same rules:\n\n" + prompt
 }
 
 // renderRetry fills the retry template with the compiler output.

@@ -12,6 +12,9 @@ import (
 // GenerateCommand is the request body for app generation.
 type GenerateCommand struct {
 	Prompt string `json:"prompt"`
+	// Code is the current component's TSX when iterating on an existing app;
+	// empty for a fresh build.
+	Code string `json:"code,omitempty"`
 }
 
 // GenerateParams binds the generate request.
@@ -58,7 +61,7 @@ func (s *Server) generate(c *router.Context, p GenerateParams) {
 		return
 	}
 
-	result, err := s.generator.Generate(c.Ctx(), prompt)
+	result, err := s.generator.Generate(c.Ctx(), prompt, p.Body.Code)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, &router.ProblemDetails{
 			Status: http.StatusBadGateway,
