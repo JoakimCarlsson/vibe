@@ -21,6 +21,7 @@ import (
 	"github.com/joakimcarlsson/ai/message"
 	"github.com/joakimcarlsson/ai/model"
 	"github.com/joakimcarlsson/ai/prompt"
+	"github.com/joakimcarlsson/ai/types"
 
 	"github.com/joakimcarlsson/vibe/internal/config"
 )
@@ -68,6 +69,21 @@ type Result struct {
 	Attempts int
 }
 
+// Progress is a stage update emitted during generation so callers can stream
+// real pipeline status to the user instead of guessing.
+type Progress struct {
+	// Phase is the stage: "planning", "brief", "generating", "building", or "retrying".
+	Phase string
+	// Message is a short, human-readable line for the current phase.
+	Message string
+	// Attempt is the 1-based generate→build attempt, for "generating"/"building"/"retrying".
+	Attempt int
+	// Brief carries the planner's design brief on the "brief" phase.
+	Brief string
+	// Error carries the build-error summary that triggered a "retrying" phase.
+	Error string
+}
+
 // New constructs a Service from config.
 func New(cfg config.GeneratorConfig) (*Service, error) {
 	if cfg.AnthropicAPIKey == "" {
@@ -86,11 +102,22 @@ func New(cfg config.GeneratorConfig) (*Service, error) {
 		return nil, err
 	}
 
+	// Prod builds with Sonnet for stronger, larger apps; DEV trades that for
+	// Haiku's speed and cost during local iteration.
+	genModel, maxTokens := model.Claude46Sonnet, int64(32000)
+	if cfg.Dev {
+		genModel, maxTokens = model.Claude45Haiku, int64(16000)
+	}
+	logger.Info("generator model selected", "model", genModel, "max_tokens", maxTokens, "dev", cfg.Dev)
+
+	// Note: the request timeout is applied per-call in send() via the context,
+	// not via WithTimeout. StreamResponse sets up its timeout context with a
+	// `defer cancel()` that fires the moment it returns the channel, so a
+	// client-level timeout would cancel the stream immediately.
 	client := llmanthropic.NewLLM(
 		llmanthropic.WithAPIKey(cfg.AnthropicAPIKey),
-		llmanthropic.WithModel(model.AnthropicModels[model.Claude45Haiku]),
-		llmanthropic.WithMaxTokens(16000),
-		llmanthropic.WithTimeout(4*time.Minute),
+		llmanthropic.WithModel(model.AnthropicModels[genModel]),
+		llmanthropic.WithMaxTokens(maxTokens),
 	)
 
 	return &Service{
@@ -105,13 +132,19 @@ func New(cfg config.GeneratorConfig) (*Service, error) {
 	}, nil
 }
 
-// Generate runs the full pipeline for one command.
-func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
+// Generate runs the full pipeline for one command. emit receives stage updates
+// as they happen; it may be nil for callers that don't want progress.
+func (s *Service) Generate(ctx context.Context, cmd Command, emit func(Progress)) (*Result, error) {
+	if emit == nil {
+		emit = func(Progress) {}
+	}
+
 	logger.InfoContext(ctx, "generation started",
 		"prompt", cmd.Prompt, "edit", len(cmd.Files) > 0, "repair", cmd.RuntimeError != "")
 
 	var brief string
 	if len(cmd.Files) == 0 {
+		emit(Progress{Phase: "planning", Message: "Designing the app…"})
 		b, err := s.plan(ctx, cmd.Prompt)
 		if err != nil {
 			logger.WarnContext(ctx, "planning failed; building without a brief", "err", err)
@@ -119,6 +152,7 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 			brief = b
 			logger.InfoContext(ctx, "planning complete", "brief_chars", len(brief))
 			logger.DebugContext(ctx, "design brief", "brief", brief)
+			emit(Progress{Phase: "brief", Message: "Design ready", Brief: brief})
 		}
 	}
 
@@ -129,7 +163,8 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 
 	var lastErr error
 	for attempt := 1; attempt <= s.maxAttempts; attempt++ {
-		resp, err := s.client.SendMessages(ctx, msgs, nil)
+		emit(Progress{Phase: "generating", Attempt: attempt, Message: "Writing React Native…"})
+		resp, err := s.send(ctx, msgs)
 		if err != nil {
 			logger.ErrorContext(ctx, "llm call failed", "attempt", attempt, "err", err)
 			return nil, fmt.Errorf("llm call: %w", err)
@@ -145,6 +180,7 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 				"finish_reason", resp.FinishReason,
 				"files", len(files),
 			)
+			emit(Progress{Phase: "building", Attempt: attempt, Message: "Bundling & validating…"})
 			hbc, buildErr = s.compile(ctx, files)
 		}
 		if buildErr == nil {
@@ -161,6 +197,14 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 		if err != nil {
 			return nil, fmt.Errorf("render retry prompt: %w", err)
 		}
+		if attempt < s.maxAttempts {
+			emit(Progress{
+				Phase:   "retrying",
+				Attempt: attempt + 1,
+				Message: "Fixing build errors…",
+				Error:   summarizeBuildError(buildErr),
+			})
+		}
 		assistant := message.NewAssistantMessage()
 		assistant.AppendContent(resp.Content)
 		msgs = append(msgs, assistant, message.NewUserMessage(retry))
@@ -175,15 +219,64 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 	)
 }
 
+// generationTimeout bounds a single streamed completion. It is generous because
+// a full Sonnet generation at the configured token budget can take minutes.
+const generationTimeout = 10 * time.Minute
+
+// send streams a single completion and returns the full response once the
+// stream completes. Streaming is mandatory: the generator's token budget can
+// exceed the API's non-streaming 10-minute limit, which rejects the request
+// outright. The channel is drained to completion so the provider's stream
+// goroutine always finishes rather than leaking on an early return.
+func (s *Service) send(ctx context.Context, msgs []message.Message) (*llm.Response, error) {
+	ctx, cancel := context.WithTimeout(ctx, generationTimeout)
+	defer cancel()
+
+	var resp *llm.Response
+	var streamErr error
+	for evt := range s.client.StreamResponse(ctx, msgs, nil) {
+		switch evt.Type {
+		case types.EventComplete:
+			resp = evt.Response
+		case types.EventError:
+			streamErr = evt.Error
+		}
+	}
+	if streamErr != nil {
+		return nil, streamErr
+	}
+	if resp == nil {
+		return nil, errors.New("stream ended without a response")
+	}
+	return resp, nil
+}
+
+// summarizeBuildError condenses a build failure to a short, single-line summary
+// suitable for a progress event — the first meaningful line, trimmed.
+func summarizeBuildError(err error) string {
+	for line := range strings.SplitSeq(err.Error(), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		const max = 160
+		if len(line) > max {
+			return line[:max] + "…"
+		}
+		return line
+	}
+	return "build failed"
+}
+
 // plan runs the design pass: it turns the one-line idea into a concrete build
 // brief (concept, aesthetic, data source, layout, interactions) that the
 // code-gen pass then implements. Its failure is non-fatal — the caller falls
 // back to generating straight from the prompt.
 func (s *Service) plan(ctx context.Context, userPrompt string) (string, error) {
-	resp, err := s.client.SendMessages(ctx, []message.Message{
+	resp, err := s.send(ctx, []message.Message{
 		message.NewSystemMessage(plannerPrompt),
 		message.NewUserMessage(userPrompt),
-	}, nil)
+	})
 	if err != nil {
 		return "", fmt.Errorf("planner call: %w", err)
 	}
