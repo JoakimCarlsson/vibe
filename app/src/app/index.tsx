@@ -3,8 +3,7 @@ import {
   Alert,
   Animated,
   Easing,
-  KeyboardAvoidingView,
-  Platform,
+  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -148,7 +147,19 @@ export default function ForgeScreen() {
   const [builtFrom, setBuiltFrom] = useState('');
   const [app, setApp] = useState<ForgedApp | null>(null);
   const [view, setView] = useState<'preview' | 'source'>('preview');
+  const [kbHeight, setKbHeight] = useState(0);
   const inputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (e) =>
+      setKbHeight(e.endCoordinates.height)
+    );
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   async function forge() {
     const w = wish.trim();
@@ -182,9 +193,7 @@ export default function ForgeScreen() {
     <View style={styles.root}>
       <SafeAreaView style={styles.safe}>
         {phase === 'landing' && (
-          <KeyboardAvoidingView
-            style={styles.shell}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[styles.shell, { paddingBottom: 24 + kbHeight }]}>
             <Rise delay={50}>
               <Text style={styles.brand}>
                 <Text style={{ color: C.accent }}>◆</Text>
@@ -217,7 +226,7 @@ export default function ForgeScreen() {
                 </Pressable>
               </View>
             </Rise>
-          </KeyboardAvoidingView>
+          </View>
         )}
 
         {phase === 'loading' && <LoadingView />}
