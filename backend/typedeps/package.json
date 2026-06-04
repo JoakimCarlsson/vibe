@@ -1,0 +1,16 @@
+{
+  "name": "vibe-typedeps",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real type definitions for the host SDK, resolved during the generator's typecheck pass so API misuse is caught before an app ships.",
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@types/react": "~19.2.2",
+    "date-fns": "^4.4.0",
+    "lucide-react-native": "^0.577.0",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-svg": "15.15.4",
+    "zustand": "^5.0.14"
+  }
+}

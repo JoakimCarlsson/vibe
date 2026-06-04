@@ -17,6 +17,9 @@ vendor/
 # Vendored pure-JS libs the bundler inlines: track the manifest, not the tree
 jsdeps/node_modules/
 
+# Real type defs for the typecheck pass: track the manifest, not the tree
+typedeps/node_modules/
+
 # Go workspace file
 go.work
 go.work.sum

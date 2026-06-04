@@ -81,6 +81,17 @@ NEVER use generic AI-generated aesthetics: no system/Inter/Roboto fonts, no purp
 - The app must actually work — real logic and state, not a static mockup. A calculator computes; a todo list adds, toggles, and deletes.
 </constraints>
 
+<reliability>
+The app runs live on a real device with no second chance — a single thrown error blanks the screen. These are the mistakes that crash generated apps; do not make them:
+
+- Event handlers are functions, never the result of calling one. `onPress={doThing}` or `onPress={() => doThing(arg)}` — never `onPress={doThing()}`. Before wiring any handler, confirm the thing you reference is actually a function and is in scope.
+- "Object is not a function" comes from calling a non-function. Don't call a value, a style object, a hook result, or a component as if it were a function.
+- zustand: select state and actions with a selector and call the action, not the store. `const add = useStore((s) => s.add); ...onPress={() => add(item)}`. Never `useStore.add()` or `useStore().add` without first creating the store with `create(...)`.
+- react-native-svg: only use `<Use>` with an href that points at an id you define in `<Defs>` (e.g. `<Use href="#star" />` with a matching `<SymbolId id="star">`). If you are not deliberately defining and referencing an id, do NOT use `<Use>` — draw the shape with `<Path>`/`<Circle>` directly, or use a `lucide-react-native` icon. Never pass `href={undefined}`.
+- Treat every value that can be missing as missing: optional-chain (`a?.b`), default (`?? fallback`), and guard before indexing or calling. Never read or call a property of something that might be undefined.
+- Only import names that the module actually exports, and only call hooks at the top level of a component.
+</reliability>
+
 <output>
 Return the project as a sequence of files, each introduced by a header line on its own line:
 

@@ -7,6 +7,7 @@ import {
   Keyboard,
   PanResponder,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,6 +15,7 @@ import {
   useAnimatedValue,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import EventSource from 'react-native-sse';
 import * as Haptics from 'expo-haptics';
 
 import { GeneratedApp } from '@/components/generated-app';
@@ -21,38 +23,90 @@ import { API_URL } from '@/lib/api';
 import { installRuntimeErrorTrap } from '@/lib/runtime-errors';
 import { colors as C, fonts } from '@/theme';
 
-const STATUS_STEPS = [
-  'sending your wish to vibe',
-  'designing the app',
-  'Claude is writing React Native',
-  'transpiling with esbuild',
-  'validating against hermes',
-  'mounting it natively',
-];
-
 type Phase = 'landing' | 'loading' | 'result';
 
 type GeneratedFile = { path: string; content: string };
 type VibedApp = { files: GeneratedFile[]; hbc: string };
 
-async function vibeApp(
+// Status mirrors the backend's StatusEvent: a real pipeline stage update.
+type Status = {
+  phase: string;
+  message?: string;
+  attempt?: number;
+  brief?: string;
+  error?: string;
+};
+
+// vibeApp streams the generation over SSE: onStatus fires for each pipeline
+// stage, and the promise resolves with the compiled app on the final result
+// event (or rejects on a failure / transport error).
+function vibeApp(
   wish: string,
-  files?: GeneratedFile[],
-  error?: string
+  files: GeneratedFile[] | undefined,
+  error: string | undefined,
+  onStatus: (s: Status) => void
 ): Promise<VibedApp> {
-  const res = await fetch(`${API_URL}/api/v1/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: wish, files, error }),
+  return new Promise((resolve, reject) => {
+    const es = new EventSource<'status' | 'result' | 'failure'>(
+      `${API_URL}/api/v1/generate/stream`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: wish, files, error }),
+        pollingInterval: 0, // one-shot: never auto-reconnect
+        timeout: 1000 * 60 * 11, // just beyond the backend's 10-minute cap
+      }
+    );
+
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      es.removeAllEventListeners();
+      es.close();
+      fn();
+    };
+
+    es.addEventListener('status', (e) => {
+      try {
+        if (e.data) onStatus(JSON.parse(e.data) as Status);
+      } catch {
+        // ignore a malformed status frame; the next one will arrive
+      }
+    });
+
+    es.addEventListener('result', (e) => {
+      let data: VibedApp | null = null;
+      try {
+        data = e.data ? (JSON.parse(e.data) as VibedApp) : null;
+      } catch {
+        data = null;
+      }
+      if (!data?.hbc || !data.files?.length) {
+        finish(() => reject(new Error('backend returned an empty app')));
+      } else {
+        finish(() => resolve(data));
+      }
+    });
+
+    es.addEventListener('failure', (e) => {
+      let detail = 'generation failed';
+      try {
+        const d = e.data ? JSON.parse(e.data) : null;
+        detail = d?.detail ?? d?.title ?? detail;
+      } catch {
+        // keep the default detail
+      }
+      finish(() => reject(new Error(detail)));
+    });
+
+    // Built-in transport error (connection refused, timeout, dropped socket) —
+    // distinct from our named "failure" event above.
+    es.addEventListener('error', (e) => {
+      const message = 'message' in e && e.message ? e.message : 'connection error';
+      finish(() => reject(new Error(message)));
+    });
   });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data?.detail ?? data?.title ?? `backend returned ${res.status}`);
-  }
-  if (!data.hbc || !data.files?.length) {
-    throw new Error('backend returned an empty app');
-  }
-  return { files: data.files, hbc: data.hbc };
 }
 
 /** Staggered rise-in wrapper, mirrors the landing entrance animation. */
@@ -120,25 +174,20 @@ function Spark() {
   );
 }
 
-function LoadingView() {
+function LoadingView({ status, brief }: { status: Status | null; brief: string }) {
   const [dots, setDots] = useState('…');
-  const [status, setStatus] = useState(STATUS_STEPS[0]);
   useEffect(() => {
-    let step = 0;
-    const statusTimer = setInterval(() => {
-      step = Math.min(step + 1, STATUS_STEPS.length - 1);
-      setStatus(STATUS_STEPS[step]);
-    }, 1400);
     let d = 0;
     const dotTimer = setInterval(() => {
       d = (d + 1) % 4;
       setDots('.'.repeat(d));
     }, 350);
-    return () => {
-      clearInterval(statusTimer);
-      clearInterval(dotTimer);
-    };
+    return () => clearInterval(dotTimer);
   }, []);
+
+  const message = status?.message ?? 'sending your wish to vibe';
+  const showAttempt = (status?.attempt ?? 0) > 1;
+
   return (
     <View style={styles.loading}>
       <View style={styles.vibingRow}>
@@ -146,7 +195,23 @@ function LoadingView() {
         <Text style={[styles.anvil, styles.dots]}>{dots}</Text>
       </View>
       <Spark />
-      <Text style={styles.status}>{status}</Text>
+      <Text style={styles.status}>
+        {message}
+        {showAttempt ? `  ·  attempt ${status?.attempt}` : ''}
+      </Text>
+      {status?.phase === 'retrying' && status.error ? (
+        <Text style={styles.statusError} numberOfLines={2}>
+          {status.error}
+        </Text>
+      ) : null}
+      {brief ? (
+        <Rise delay={0} style={styles.briefWrap}>
+          <Text style={styles.briefLabel}>DESIGN BRIEF</Text>
+          <ScrollView style={styles.briefScroll} showsVerticalScrollIndicator={false}>
+            <Text style={styles.briefText}>{brief.trim()}</Text>
+          </ScrollView>
+        </Rise>
+      ) : null}
     </View>
   );
 }
@@ -265,6 +330,8 @@ export default function VibeScreen() {
   const [chatText, setChatText] = useState('');
   const [kbHeight, setKbHeight] = useState(0);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [brief, setBrief] = useState('');
   const inputRef = useRef<TextInput>(null);
   const chatRef = useRef<TextInput>(null);
 
@@ -298,9 +365,14 @@ export default function VibeScreen() {
     if (!w && !isRepair) return;
     const returnTo: Phase = phase;
     setRuntimeError(null);
+    setStatus(null);
+    setBrief('');
     setPhase('loading');
     try {
-      const vibed = await vibeApp(w, files, error);
+      const vibed = await vibeApp(w, files, error, (s) => {
+        setStatus(s);
+        if (s.brief) setBrief(s.brief);
+      });
       setApp(vibed);
       setChatting(false);
       setChatText('');
@@ -334,6 +406,8 @@ export default function VibeScreen() {
     setChatText('');
     setChatting(false);
     setFabOpen(false);
+    setStatus(null);
+    setBrief('');
     setPhase('landing');
   }
 
@@ -377,7 +451,7 @@ export default function VibeScreen() {
           </View>
         )}
 
-        {phase === 'loading' && <LoadingView />}
+        {phase === 'loading' && <LoadingView status={status} brief={brief} />}
 
         {phase === 'result' && (
           <View style={styles.result}>
@@ -544,6 +618,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: C.muted,
     letterSpacing: 0.6,
+    textAlign: 'center',
+  },
+  statusError: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    lineHeight: 15,
+    color: C.accentDim,
+    textAlign: 'center',
+    maxWidth: 320,
+    marginTop: -12,
+  },
+  briefWrap: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: 260,
+    backgroundColor: C.panel,
+    borderWidth: 1,
+    borderColor: C.line,
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 6,
+  },
+  briefLabel: {
+    fontFamily: fonts.monoBold,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    color: C.accent,
+    marginBottom: 10,
+  },
+  briefScroll: { flexGrow: 0 },
+  briefText: {
+    fontFamily: fonts.mono,
+    fontSize: 12,
+    lineHeight: 18,
+    color: C.muted,
   },
 
   // result

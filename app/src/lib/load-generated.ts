@@ -1,9 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import React from 'react';
 import * as ReactNative from 'react-native';
+import * as Svg from 'react-native-svg';
 import * as JSXRuntime from 'react/jsx-runtime';
 
 import { evaluateBytecode } from '../../modules/vibe-hermes';
@@ -23,6 +25,8 @@ const modules: Record<string, unknown> = {
   'expo-haptics': Haptics,
   'expo-image-picker': ImagePicker,
   'expo-location': Location,
+  'react-native-svg': Svg,
+  'expo-linear-gradient': { LinearGradient },
 };
 
 globalThis.__vibeRequire = (name: string) => {
