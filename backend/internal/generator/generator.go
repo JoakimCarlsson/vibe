@@ -37,17 +37,23 @@ var plannerTemplate string
 //go:embed prompts/retry.md
 var retryTemplate string
 
+//go:embed prompts/review.md
+var reviewTemplate string
+
 // Service generates and validates React Native apps from prompts.
 type Service struct {
-	client       llm.LLM
-	hermesc      string
-	tsc          string
-	vendorDir    string
+	client        llm.LLM
+	hermesc       string
+	tsc           string
+	vendorDir     string
+	typeDir       string
 	systemPrompt  string
 	plannerPrompt string
+	reviewPrompt  string
 	externals     []string
 	ambient       []string
 	maxAttempts   int
+	selfReview    bool
 }
 
 // Command is one generation request: a fresh build (Prompt only), an edit
@@ -68,6 +74,21 @@ type Result struct {
 	Brief string
 	// Attempts is how many generations it took.
 	Attempts int
+}
+
+// Progress is a stage update emitted during generation so callers can stream
+// real pipeline status to the user instead of guessing.
+type Progress struct {
+	// Phase is the stage: "planning", "brief", "generating", "building", or "retrying".
+	Phase string
+	// Message is a short, human-readable line for the current phase.
+	Message string
+	// Attempt is the 1-based generate→build attempt, for "generating"/"building"/"retrying".
+	Attempt int
+	// Brief carries the planner's design brief on the "brief" phase.
+	Brief string
+	// Error carries the build-error summary that triggered a "retrying" phase.
+	Error string
 }
 
 // New constructs a Service from config.
@@ -107,25 +128,34 @@ func New(cfg config.GeneratorConfig) (*Service, error) {
 	)
 
 	return &Service{
-		client:       client,
-		hermesc:      hermesc,
-		tsc:          findTSC(),
-		vendorDir:    findVendorDir(),
+		client:        client,
+		hermesc:       hermesc,
+		tsc:           findTSC(),
+		vendorDir:     findVendorDir(),
+		typeDir:       findTypeDir(),
 		systemPrompt:  renderSystemPrompt(sdk),
 		plannerPrompt: renderPlannerPrompt(sdk),
+		reviewPrompt:  renderReviewPrompt(sdk),
 		externals:     sdk.externals(),
 		ambient:       sdk.allModules(),
 		maxAttempts:   max(cfg.MaxAttempts, 1),
+		selfReview:    cfg.SelfReview,
 	}, nil
 }
 
-// Generate runs the full pipeline for one command.
-func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
+// Generate runs the full pipeline for one command. emit receives stage updates
+// as they happen; it may be nil for callers that don't want progress.
+func (s *Service) Generate(ctx context.Context, cmd Command, emit func(Progress)) (*Result, error) {
+	if emit == nil {
+		emit = func(Progress) {}
+	}
+
 	logger.InfoContext(ctx, "generation started",
 		"prompt", cmd.Prompt, "edit", len(cmd.Files) > 0, "repair", cmd.RuntimeError != "")
 
 	var brief string
 	if len(cmd.Files) == 0 {
+		emit(Progress{Phase: "planning", Message: "Designing the app…"})
 		b, err := s.plan(ctx, cmd.Prompt)
 		if err != nil {
 			logger.WarnContext(ctx, "planning failed; building without a brief", "err", err)
@@ -133,6 +163,7 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 			brief = b
 			logger.InfoContext(ctx, "planning complete", "brief_chars", len(brief))
 			logger.DebugContext(ctx, "design brief", "brief", brief)
+			emit(Progress{Phase: "brief", Message: "Design ready", Brief: brief})
 		}
 	}
 
@@ -143,6 +174,7 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 
 	var lastErr error
 	for attempt := 1; attempt <= s.maxAttempts; attempt++ {
+		emit(Progress{Phase: "generating", Attempt: attempt, Message: "Writing React Native…"})
 		resp, err := s.send(ctx, msgs)
 		if err != nil {
 			logger.ErrorContext(ctx, "llm call failed", "attempt", attempt, "err", err)
@@ -159,11 +191,13 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 				"finish_reason", resp.FinishReason,
 				"files", len(files),
 			)
+			emit(Progress{Phase: "building", Attempt: attempt, Message: "Bundling & validating…"})
 			hbc, buildErr = s.compile(ctx, files)
 		}
 		if buildErr == nil {
 			logger.InfoContext(ctx, "generation succeeded",
 				"attempt", attempt, "files", len(files), "hbc_bytes", len(hbc))
+			files, hbc = s.maybeReview(ctx, files, hbc, emit)
 			return &Result{Files: files, HBC: hbc, Brief: brief, Attempts: attempt}, nil
 		}
 
@@ -174,6 +208,14 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 		retry, err := renderRetry(buildErr)
 		if err != nil {
 			return nil, fmt.Errorf("render retry prompt: %w", err)
+		}
+		if attempt < s.maxAttempts {
+			emit(Progress{
+				Phase:   "retrying",
+				Attempt: attempt + 1,
+				Message: "Fixing build errors…",
+				Error:   summarizeBuildError(buildErr),
+			})
 		}
 		assistant := message.NewAssistantMessage()
 		assistant.AppendContent(resp.Content)
@@ -219,6 +261,62 @@ func (s *Service) send(ctx context.Context, msgs []message.Message) (*llm.Respon
 		return nil, errors.New("stream ended without a response")
 	}
 	return resp, nil
+}
+
+// maybeReview runs the self-review QA pass over a freshly built app. It only
+// adopts the reviewed version if it still compiles, so review can never make a
+// working app worse — a failed or unbuildable review keeps the original.
+func (s *Service) maybeReview(
+	ctx context.Context,
+	files []File,
+	hbc []byte,
+	emit func(Progress),
+) ([]File, []byte) {
+	if !s.selfReview {
+		return files, hbc
+	}
+
+	emit(Progress{Phase: "reviewing", Message: "Reviewing for bugs…"})
+	reviewed, err := s.review(ctx, files)
+	if err != nil {
+		logger.WarnContext(ctx, "self-review failed; keeping original", "err", err)
+		return files, hbc
+	}
+	if reviewed == nil {
+		logger.InfoContext(ctx, "self-review found nothing to change")
+		return files, hbc
+	}
+
+	newHBC, buildErr := s.compile(ctx, reviewed)
+	if buildErr != nil {
+		logger.WarnContext(ctx, "self-review output failed to build; keeping original",
+			"err", buildErr)
+		return files, hbc
+	}
+
+	logger.InfoContext(ctx, "self-review applied",
+		"files", len(reviewed), "hbc_bytes", len(newHBC))
+	return reviewed, newHBC
+}
+
+// review asks the model to find and fix runtime bugs in a built project. It
+// returns the corrected file map, or nil when the model reports no changes.
+func (s *Service) review(ctx context.Context, files []File) ([]File, error) {
+	resp, err := s.send(ctx, []message.Message{
+		message.NewSystemMessage(s.reviewPrompt),
+		message.NewUserMessage("Review this project:\n\n" + renderFileMap(files)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("review call: %w", err)
+	}
+	if strings.HasPrefix(strings.TrimSpace(resp.Content), "NO CHANGES") {
+		return nil, nil
+	}
+	reviewed, parseErr := parseFileMap(resp.Content)
+	if parseErr != nil {
+		return nil, fmt.Errorf("parse review output: %w", parseErr)
+	}
+	return reviewed, nil
 }
 
 // plan runs the design pass: it turns the one-line idea into a concrete build
@@ -288,6 +386,11 @@ func renderPlannerPrompt(sdk *hostSDK) string {
 	return strings.ReplaceAll(plannerTemplate, "{{HOST_SDK}}", sdk.docs())
 }
 
+// renderReviewPrompt injects the host SDK surface into the self-review prompt.
+func renderReviewPrompt(sdk *hostSDK) string {
+	return strings.ReplaceAll(reviewTemplate, "{{HOST_SDK}}", sdk.docs())
+}
+
 // compile writes the project to a temp dir, bundles it with esbuild (host
 // modules external, vendored deps inlined), type-checks it, then compiles the
 // bundle to Hermes bytecode the app evaluates directly on its runtime.
@@ -336,7 +439,7 @@ func (s *Service) compile(ctx context.Context, files []File) ([]byte, error) {
 		return nil, errors.New("esbuild produced no output")
 	}
 
-	if err := s.typecheck(ctx, dir, entry); err != nil {
+	if err := s.typecheck(ctx, dir); err != nil {
 		return nil, err
 	}
 
@@ -381,6 +484,23 @@ func (s *Service) emitBytecode(ctx context.Context, js string) ([]byte, error) {
 		return nil, fmt.Errorf("hermes compile: read bytecode: %w", err)
 	}
 	return hbc, nil
+}
+
+// summarizeBuildError condenses a build failure to a short, single-line summary
+// suitable for a progress event — the first meaningful line, trimmed.
+func summarizeBuildError(err error) string {
+	for line := range strings.SplitSeq(err.Error(), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		const max = 160
+		if len(line) > max {
+			return line[:max] + "…"
+		}
+		return line
+	}
+	return "build failed"
 }
 
 // stripFences removes a wrapping markdown code fence if the model added one.
