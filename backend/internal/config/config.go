@@ -25,6 +25,12 @@ type GeneratorConfig struct {
 	HermescPath string
 	// MaxAttempts bounds the generate→compile→retry loop.
 	MaxAttempts int
+	// Dev selects the cheap, fast model (Haiku) over the high-quality one
+	// (Sonnet) for code generation. Set DEV=true for local iteration.
+	Dev bool
+	// SelfReview runs a second model pass over a freshly built app to catch
+	// runtime bugs before returning it. Costs one extra LLM call per build.
+	SelfReview bool
 }
 
 // ServerConfig holds HTTP server settings.
@@ -71,6 +77,8 @@ func Load() (Config, error) {
 			AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 			HermescPath:     os.Getenv("HERMESC_PATH"),
 			MaxAttempts:     getEnvInt("GENERATOR_MAX_ATTEMPTS", 3),
+			Dev:             getEnvBool("DEV", false),
+			SelfReview:      getEnvBool("SELF_REVIEW", true),
 		},
 	}
 

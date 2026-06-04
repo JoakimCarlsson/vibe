@@ -41,6 +41,21 @@
       "docs": "Device location. `import * as Location from 'expo-location'`; call `requestForegroundPermissionsAsync()` then `getCurrentPositionAsync({})` for `coords.latitude`/`coords.longitude`. Handle denial with a readable fallback."
     },
     {
+      "module": "react-native-svg",
+      "kind": "host",
+      "docs": "Vector graphics. `import Svg, { Path, Circle, Rect, Line, Polyline, G, Defs, LinearGradient as SvgGradient, Stop, Text as SvgText } from 'react-native-svg'`. Use for custom icons, charts, sparklines, gauges, progress rings, and illustrations. Size with width/height; draw shapes with the `d`/`points`/`cx` props. This is how you draw anything the built-in components can't."
+    },
+    {
+      "module": "lucide-react-native",
+      "kind": "purejs",
+      "docs": "Clean line-icon set (1000+ icons). `import { ArrowRight, Heart, Search, Settings } from 'lucide-react-native'` then `<Search size={20} color={C.accent} strokeWidth={2} />`. Use real icons from here instead of text glyphs (◆, ×, →) for any icon in the UI."
+    },
+    {
+      "module": "expo-linear-gradient",
+      "kind": "host",
+      "docs": "Gradient fills. `import { LinearGradient } from 'expo-linear-gradient'` then `<LinearGradient colors={['#…', '#…']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={…} />`. Use deliberately for depth on a hero, CTA, or chart fill — never the generic purple-on-dark gradient."
+    },
+    {
       "module": "zustand",
       "kind": "purejs",
       "docs": "Small global state store. `import { create } from 'zustand'` then `const useStore = create((set) => ({ count: 0, inc: () => set((s) => ({ count: s.count + 1 })) }))`. Define the store in a lib/ file and use the hook in any screen."
