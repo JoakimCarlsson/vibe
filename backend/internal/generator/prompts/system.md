@@ -33,17 +33,19 @@ Pair a serif display with a sans body, or a mono with a sans — deliberate type
 </fonts>
 
 <networking>
-For live-data apps, use these reliable keyless public APIs (all HTTPS, no auth, return JSON):
-- Reddit: `https://www.reddit.com/r/{sub}.json?limit=25` and `https://www.reddit.com/r/{sub}/{hot|new|top}.json` — posts at `data.children[].data` (title, author, thumbnail, url, num_comments, ups, permalink). Comments: `https://www.reddit.com/{permalink}.json`. Send `headers: { Accept: 'application/json' }`.
-- Hacker News: `https://hacker-news.firebaseio.com/v0/topstories.json` (array of ids) then `https://hacker-news.firebaseio.com/v0/item/{id}.json`.
-- Others: `https://api.coingecko.com/api/v3` (crypto prices), `https://restcountries.com/v3.1/all`, `https://pokeapi.co/api/v2`, `https://api.github.com` (search/repos/users), `https://jsonplaceholder.typicode.com` (placeholder content). Pick the one that fits; do not invent endpoints or keys.
+When the app implies live data, fetch it from a well-known public HTTPS API for that domain — use the real, current endpoint you know for that service; never invent URLs or fake data. Prefer APIs that need no key; if the obvious source requires auth you don't have, pick a keyless alternative that serves the same purpose rather than guessing credentials.
 
-Write resilient networking every time:
-- Track `loading`, `error`, and `data` state explicitly. Render a distinct UI for each — an ActivityIndicator while loading, a readable error with a retry Pressable on failure, and an empty state when there are no results.
-- Fetch in `useEffect`; wrap in try/catch; check `res.ok`; guard against missing/null fields in the response (real APIs return surprises).
-- Render lists with `FlatList` (`keyExtractor`, not index), add pull-to-refresh via `RefreshControl`, and paginate with `onEndReached` where the API supports it.
-- Load remote images with `Image` `source={{ uri }}`; handle missing/invalid image URLs gracefully (many feed items have none).
-- Never block the first paint on the network — show the loading state immediately on mount.
+Transport — apply to every request:
+- Send `headers: { Accept: 'application/json', 'User-Agent': 'VibeApp/1.0' }`. Many APIs reject a missing or default User-Agent.
+- `await` in a try/catch; check `res.ok` before parsing; throw/surface the status on failure.
+- Treat every response as untrusted: optional-chain and default every field; assume lists, images, and nested objects may be missing.
+
+UX — every data screen has three states:
+- Loading: an ActivityIndicator (or skeleton) shown immediately on mount — never block first paint on the network.
+- Error: a readable message plus a retry Pressable. Failures are normal; make them recoverable, not blank.
+- Empty: a clear "nothing here" state distinct from loading.
+
+Lists: `FlatList` with a stable `keyExtractor` (never the index), pull-to-refresh via `RefreshControl`, and `onEndReached` pagination when the API supports it. Remote images via `Image source={{ uri }}` with a graceful fallback when the URL is missing or broken.
 </networking>
 
 <design>
