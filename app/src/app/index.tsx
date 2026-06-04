@@ -19,6 +19,7 @@ import { colors as C, fonts } from '@/theme';
 
 const STATUS_STEPS = [
   'sending your wish to the forge',
+  'designing the app',
   'Claude is writing React Native',
   'transpiling with esbuild',
   'validating against hermes',

@@ -31,6 +31,9 @@ var logger = slog.With("subsystem", "generator")
 //go:embed prompts/system.md
 var systemPrompt string
 
+//go:embed prompts/planner.md
+var plannerPrompt string
+
 //go:embed prompts/retry.md
 var retryTemplate string
 
@@ -57,6 +60,8 @@ type Result struct {
 	TSX string
 	// HBC is the Hermes bytecode the app evaluates on its runtime.
 	HBC []byte
+	// Brief is the design/architecture brief the planner produced, if any.
+	Brief string
 	// Attempts is how many generations it took.
 	Attempts int
 }
@@ -79,6 +84,7 @@ func New(cfg config.GeneratorConfig) (*Service, error) {
 		llmanthropic.WithMaxTokens(16000),
 		llmanthropic.WithTimeout(4*time.Minute),
 	)
+
 	return &Service{
 		client:      client,
 		hermesc:     hermesc,
@@ -88,13 +94,26 @@ func New(cfg config.GeneratorConfig) (*Service, error) {
 
 // Generate runs the full pipeline for one prompt.
 func (s *Service) Generate(ctx context.Context, userPrompt, currentCode string) (*Result, error) {
-	msgs := []message.Message{
-		message.NewSystemMessage(systemPrompt),
-		message.NewUserMessage(buildUserMessage(userPrompt, currentCode)),
-	}
-
 	logger.InfoContext(ctx, "generation started",
 		"prompt", userPrompt, "edit", currentCode != "")
+
+	var brief string
+	if currentCode == "" {
+		b, err := s.plan(ctx, userPrompt)
+		if err != nil {
+			logger.WarnContext(ctx, "planning failed; building without a brief",
+				"err", err)
+		} else {
+			brief = b
+			logger.InfoContext(ctx, "planning complete", "brief_chars", len(brief))
+			logger.DebugContext(ctx, "design brief", "brief", brief)
+		}
+	}
+
+	msgs := []message.Message{
+		message.NewSystemMessage(systemPrompt),
+		message.NewUserMessage(buildUserMessage(userPrompt, currentCode, brief)),
+	}
 
 	var lastErr error
 	for attempt := 1; attempt <= s.maxAttempts; attempt++ {
@@ -118,7 +137,7 @@ func (s *Service) Generate(ctx context.Context, userPrompt, currentCode string) 
 		if buildErr == nil {
 			logger.InfoContext(ctx, "generation succeeded",
 				"attempt", attempt, "tsx_chars", len(tsx), "hbc_bytes", len(hbc))
-			return &Result{TSX: tsx, HBC: hbc, Attempts: attempt}, nil
+			return &Result{TSX: tsx, HBC: hbc, Brief: brief, Attempts: attempt}, nil
 		}
 
 		logger.WarnContext(ctx, "generated code failed to compile",
@@ -143,15 +162,41 @@ func (s *Service) Generate(ctx context.Context, userPrompt, currentCode string) 
 	)
 }
 
-// buildUserMessage frames a fresh build as the prompt itself, or an edit as
-// the current component plus the requested change.
-func buildUserMessage(prompt, currentCode string) string {
-	if currentCode == "" {
-		return prompt
+// plan runs the design pass: it turns the one-line idea into a concrete build
+// brief (concept, aesthetic, data source, layout, interactions) that the
+// code-gen pass then implements. Its failure is non-fatal — the caller falls
+// back to generating straight from the prompt.
+func (s *Service) plan(ctx context.Context, userPrompt string) (string, error) {
+	resp, err := s.client.SendMessages(ctx, []message.Message{
+		message.NewSystemMessage(plannerPrompt),
+		message.NewUserMessage(userPrompt),
+	}, nil)
+	if err != nil {
+		return "", fmt.Errorf("planner call: %w", err)
 	}
-	return "Here is the current component:\n\n```tsx\n" + currentCode +
-		"\n```\n\nApply this change and return the COMPLETE updated component, " +
-		"following all the same rules:\n\n" + prompt
+	brief := strings.TrimSpace(stripFences(resp.Content))
+	if brief == "" {
+		return "", errors.New("planner returned an empty brief")
+	}
+	return brief, nil
+}
+
+// buildUserMessage frames a fresh build as the prompt (optionally with a design
+// brief to follow), or an edit as the current component plus the requested
+// change.
+func buildUserMessage(prompt, currentCode, brief string) string {
+	if currentCode != "" {
+		return "Here is the current component:\n\n```tsx\n" + currentCode +
+			"\n```\n\nApply this change and return the COMPLETE updated component, " +
+			"following all the same rules:\n\n" + prompt
+	}
+	if brief != "" {
+		return "Build this app: " + prompt + "\n\n" +
+			"A designer has produced the build brief below. Follow it faithfully — " +
+			"honor the concept, aesthetic, data source, and layout it specifies, " +
+			"refining details only where they improve the result:\n\n" + brief
+	}
+	return prompt
 }
 
 // renderRetry fills the retry template with the compiler output.

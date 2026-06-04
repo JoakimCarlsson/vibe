@@ -40,7 +40,8 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
-    "start": "(adb reverse tcp:8081 tcp:8081 && adb reverse tcp:1337 tcp:1337 || echo no usb device, skipping adb reverse) && expo start",
+    "start": "(adb reverse tcp:8081 tcp:8081 && adb reverse tcp:1337 tcp:1337 || echo no usb device, skipping adb reverse) && expo run:android",
+    "start:js": "(adb reverse tcp:8081 tcp:8081 && adb reverse tcp:1337 tcp:1337 || echo no usb device, skipping adb reverse) && expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "ios": "expo run:ios",
