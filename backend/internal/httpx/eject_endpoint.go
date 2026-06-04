@@ -17,7 +17,7 @@ func (s *Server) registerEject() {
 			"Renders the generated file map into a complete, buildable Expo "+
 				"project and returns it as a zip archive, ready for eas build.",
 		),
-		openapi.Tags("Forge"),
+		openapi.Tags("Vibe"),
 		openapi.ReturnsBody[router.ProblemDetails](
 			http.StatusBadRequest,
 			"Missing project files",

@@ -19,7 +19,7 @@ import { installRuntimeErrorTrap } from '@/lib/runtime-errors';
 import { colors as C, fonts } from '@/theme';
 
 const STATUS_STEPS = [
-  'sending your wish to the forge',
+  'sending your wish to vibe',
   'designing the app',
   'Claude is writing React Native',
   'transpiling with esbuild',
@@ -30,13 +30,13 @@ const STATUS_STEPS = [
 type Phase = 'landing' | 'loading' | 'result';
 
 type GeneratedFile = { path: string; content: string };
-type ForgedApp = { files: GeneratedFile[]; hbc: string };
+type VibedApp = { files: GeneratedFile[]; hbc: string };
 
-async function forgeApp(
+async function vibeApp(
   wish: string,
   files?: GeneratedFile[],
   error?: string
-): Promise<ForgedApp> {
+): Promise<VibedApp> {
   const res = await fetch(`${API_URL}/api/v1/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -148,10 +148,10 @@ function LoadingView() {
   );
 }
 
-export default function ForgeScreen() {
+export default function VibeScreen() {
   const [phase, setPhase] = useState<Phase>('landing');
   const [wish, setWish] = useState('');
-  const [app, setApp] = useState<ForgedApp | null>(null);
+  const [app, setApp] = useState<VibedApp | null>(null);
   const [fabOpen, setFabOpen] = useState(false);
   const [chatting, setChatting] = useState(false);
   const [chatText, setChatText] = useState('');
@@ -192,8 +192,8 @@ export default function ForgeScreen() {
     setRuntimeError(null);
     setPhase('loading');
     try {
-      const forged = await forgeApp(w, files, error);
-      setApp(forged);
+      const vibed = await vibeApp(w, files, error);
+      setApp(vibed);
       setChatting(false);
       setChatText('');
       setFabOpen(false);
@@ -213,7 +213,7 @@ export default function ForgeScreen() {
     generate('', app?.files, report);
   }
 
-  function forge() {
+  function vibe() {
     if (!wish.trim()) {
       inputRef.current?.focus();
       return;
@@ -256,12 +256,12 @@ export default function ForgeScreen() {
                   placeholder="I want a calculator…"
                   placeholderTextColor={C.placeholder}
                   returnKeyType="go"
-                  onSubmitEditing={forge}
+                  onSubmitEditing={vibe}
                   autoCorrect={false}
                 />
                 <Pressable
                   style={({ pressed }) => [styles.go, pressed && styles.goPressed]}
-                  onPress={forge}>
+                  onPress={vibe}>
                   <Text style={styles.goText}>VIBE →</Text>
                 </Pressable>
               </View>

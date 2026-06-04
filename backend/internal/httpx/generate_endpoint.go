@@ -47,13 +47,13 @@ func (s *Server) registerGenerate() {
 	s.router.Post("/api/v1/generate", s.generate,
 		openapi.Summary("Generate a native app from a prompt"),
 		openapi.Description(
-			"Runs the forge pipeline: the LLM emits a multi-file React Native "+
+			"Runs the vibe pipeline: the LLM emits a multi-file React Native "+
 				"project, esbuild bundles it against the host SDK (host modules "+
 				"external, vendored pure-JS inlined), and hermesc validates the "+
 				"bundle for the device engine. Build errors are fed back to the "+
 				"model for bounded retries.",
 		),
-		openapi.Tags("Forge"),
+		openapi.Tags("Vibe"),
 		openapi.ReturnsBody[GenerateResponse](http.StatusOK, "Generated app code"),
 		openapi.ReturnsBody[router.ProblemDetails](
 			http.StatusBadRequest,
