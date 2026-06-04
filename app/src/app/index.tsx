@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { GeneratedApp } from '@/components/generated-app';
 import { API_URL } from '@/lib/api';
+import { installRuntimeErrorTrap } from '@/lib/runtime-errors';
 import { colors as C, fonts } from '@/theme';
 
 const STATUS_STEPS = [
@@ -28,22 +29,27 @@ const STATUS_STEPS = [
 
 type Phase = 'landing' | 'loading' | 'result';
 
-type ForgedApp = { tsx: string; hbc: string };
+type GeneratedFile = { path: string; content: string };
+type ForgedApp = { files: GeneratedFile[]; hbc: string };
 
-async function forgeApp(wish: string, code?: string): Promise<ForgedApp> {
+async function forgeApp(
+  wish: string,
+  files?: GeneratedFile[],
+  error?: string
+): Promise<ForgedApp> {
   const res = await fetch(`${API_URL}/api/v1/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: wish, code }),
+    body: JSON.stringify({ prompt: wish, files, error }),
   });
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data?.detail ?? data?.title ?? `backend returned ${res.status}`);
   }
-  if (!data.hbc || !data.tsx) {
+  if (!data.hbc || !data.files?.length) {
     throw new Error('backend returned an empty app');
   }
-  return { tsx: data.tsx, hbc: data.hbc };
+  return { files: data.files, hbc: data.hbc };
 }
 
 /** Staggered rise-in wrapper, mirrors the landing entrance animation. */
@@ -150,6 +156,7 @@ export default function ForgeScreen() {
   const [chatting, setChatting] = useState(false);
   const [chatText, setChatText] = useState('');
   const [kbHeight, setKbHeight] = useState(0);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const inputRef = useRef<TextInput>(null);
   const chatRef = useRef<TextInput>(null);
 
@@ -164,14 +171,28 @@ export default function ForgeScreen() {
     };
   }, []);
 
-  // generate builds a fresh app (code omitted) or edits the current one.
-  async function generate(prompt: string, code?: string) {
+  // While a generated app is mounted, trap async/uncaught errors the render
+  // boundary can't see and surface the first one for repair.
+  useEffect(() => {
+    if (phase !== 'result' || !app) return;
+    setRuntimeError(null);
+    const uninstall = installRuntimeErrorTrap((report) =>
+      setRuntimeError((prev) => prev ?? report)
+    );
+    return uninstall;
+  }, [phase, app]);
+
+  // generate builds a fresh app, edits the current project when files are passed,
+  // or repairs it when a runtime crash report is passed.
+  async function generate(prompt: string, files?: GeneratedFile[], error?: string) {
     const w = prompt.trim();
-    if (!w) return;
+    const isRepair = !!error && !!files?.length;
+    if (!w && !isRepair) return;
     const returnTo: Phase = phase;
+    setRuntimeError(null);
     setPhase('loading');
     try {
-      const forged = await forgeApp(w, code);
+      const forged = await forgeApp(w, files, error);
       setApp(forged);
       setChatting(false);
       setChatText('');
@@ -185,6 +206,11 @@ export default function ForgeScreen() {
           (err instanceof Error ? err.message : String(err))
       );
     }
+  }
+
+  // repair sends a device-side runtime crash back to the generator for a fix.
+  function repair(report: string) {
+    generate('', app?.files, report);
   }
 
   function forge() {
@@ -247,7 +273,28 @@ export default function ForgeScreen() {
 
         {phase === 'result' && (
           <View style={styles.result}>
-            <View style={styles.stage}>{app && <GeneratedApp hbc={app.hbc} />}</View>
+            <View style={styles.stage}>
+              {app && <GeneratedApp hbc={app.hbc} onRepair={repair} />}
+            </View>
+
+            {runtimeError && !chatting && (
+              <View style={[styles.errorBar, { bottom: 28 + kbHeight }]}>
+                <View style={styles.errorTextWrap}>
+                  <Text style={styles.errorTitle}>Runtime error</Text>
+                  <Text style={styles.errorMessage} numberOfLines={2}>
+                    {runtimeError.split('\n')[0]}
+                  </Text>
+                </View>
+                <Pressable
+                  style={({ pressed }) => [styles.errorFix, pressed && styles.goPressed]}
+                  onPress={() => repair(runtimeError)}>
+                  <Text style={styles.errorFixText}>✦ Fix</Text>
+                </Pressable>
+                <Pressable style={styles.errorDismiss} onPress={() => setRuntimeError(null)}>
+                  <Text style={styles.errorDismissText}>×</Text>
+                </Pressable>
+              </View>
+            )}
 
             {chatting && (
               <View style={[styles.chatBar, { bottom: 16 + kbHeight }]}>
@@ -259,12 +306,12 @@ export default function ForgeScreen() {
                   placeholder="Describe a change…"
                   placeholderTextColor={C.placeholder}
                   returnKeyType="send"
-                  onSubmitEditing={() => generate(chatText, app?.tsx)}
+                  onSubmitEditing={() => generate(chatText, app?.files)}
                   autoFocus
                 />
                 <Pressable
                   style={({ pressed }) => [styles.chatSend, pressed && styles.goPressed]}
-                  onPress={() => generate(chatText, app?.tsx)}>
+                  onPress={() => generate(chatText, app?.files)}>
                   <Text style={styles.chatSendText}>→</Text>
                 </Pressable>
               </View>
@@ -445,6 +492,60 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansMedium,
     fontSize: 14,
     color: C.ink,
+  },
+
+  // runtime error banner
+  errorBar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: C.panel,
+    borderWidth: 1,
+    borderColor: C.line,
+    borderRadius: 14,
+    paddingLeft: 16,
+    paddingRight: 10,
+    paddingVertical: 10,
+  },
+  errorTextWrap: { flex: 1 },
+  errorTitle: {
+    fontFamily: fonts.monoBold,
+    fontSize: 11,
+    letterSpacing: 0.6,
+    color: C.accent,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  errorMessage: {
+    fontFamily: fonts.mono,
+    fontSize: 12,
+    lineHeight: 16,
+    color: C.muted,
+  },
+  errorFix: {
+    backgroundColor: C.accent,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  errorFixText: {
+    fontFamily: fonts.monoBold,
+    fontSize: 13,
+    color: C.onAccent,
+  },
+  errorDismiss: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorDismissText: {
+    fontFamily: fonts.serif,
+    fontSize: 20,
+    color: C.muted,
   },
 
   // chat-to-edit overlay

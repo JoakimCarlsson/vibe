@@ -1,0 +1,54 @@
+{
+  "modules": [
+    {
+      "module": "react",
+      "kind": "host",
+      "docs": "useState, useReducer, useEffect, useRef, useMemo, useCallback, useContext, createContext and the rest of the hooks API."
+    },
+    {
+      "module": "react-native",
+      "kind": "host",
+      "docs": "View, Text, TextInput, Pressable, TouchableOpacity, ScrollView, FlatList, SectionList, Switch, Modal, ActivityIndicator, Image (remote uri sources only), KeyboardAvoidingView, RefreshControl, StyleSheet, Dimensions, useWindowDimensions, Platform, Animated, Easing, Alert, Keyboard."
+    },
+    {
+      "module": "react/jsx-runtime",
+      "kind": "host",
+      "docs": ""
+    },
+    {
+      "module": "@vibe/router",
+      "kind": "host",
+      "docs": "Pure-JS stack navigator. `NavigationContainer({ screens, initialRouteName })` where screens maps a name to a component; `useNavigation()` returns { navigate(name, params), replace(name, params), goBack(), canGoBack, route }; `useRoute()` returns { name, params }. Use this for multi-screen apps instead of building navigation by hand."
+    },
+    {
+      "module": "@react-native-async-storage/async-storage",
+      "kind": "host",
+      "docs": "Async key-value persistence. `import AsyncStorage from '@react-native-async-storage/async-storage'` then `await AsyncStorage.getItem(key)`, `setItem(key, value)`, `removeItem(key)`. Store strings (JSON.stringify objects). Use it so data survives reloads."
+    },
+    {
+      "module": "expo-haptics",
+      "kind": "host",
+      "docs": "Tactile feedback. `import * as Haptics from 'expo-haptics'` then `Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)` or `Haptics.notificationAsync(...)`. Use sparingly on meaningful actions."
+    },
+    {
+      "module": "expo-image-picker",
+      "kind": "host",
+      "docs": "Camera and photo library. `import * as ImagePicker from 'expo-image-picker'`; request with `requestCameraPermissionsAsync()` / `requestMediaLibraryPermissionsAsync()`, then `launchCameraAsync({ quality: 0.7 })` or `launchImageLibraryAsync(...)`. Result has `canceled` and `assets[0].uri` (render via Image source={{ uri }}). Always handle permission denial gracefully."
+    },
+    {
+      "module": "expo-location",
+      "kind": "host",
+      "docs": "Device location. `import * as Location from 'expo-location'`; call `requestForegroundPermissionsAsync()` then `getCurrentPositionAsync({})` for `coords.latitude`/`coords.longitude`. Handle denial with a readable fallback."
+    },
+    {
+      "module": "zustand",
+      "kind": "purejs",
+      "docs": "Small global state store. `import { create } from 'zustand'` then `const useStore = create((set) => ({ count: 0, inc: () => set((s) => ({ count: s.count + 1 })) }))`. Define the store in a lib/ file and use the hook in any screen."
+    },
+    {
+      "module": "date-fns",
+      "kind": "purejs",
+      "docs": "Date utilities, e.g. `import { format, formatDistanceToNow } from 'date-fns'`. Import only the functions you use."
+    }
+  ]
+}

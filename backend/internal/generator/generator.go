@@ -1,6 +1,6 @@
-// Package generator turns a user prompt into runnable React Native code:
-// LLM → TSX → esbuild transpile → import allowlist → hermesc validation,
-// feeding compiler errors back to the model for a bounded number of retries.
+// Package generator turns a user prompt into a runnable React Native app:
+// LLM → multi-file project → esbuild bundle → hermesc validation, feeding
+// build errors back to the model for a bounded number of retries.
 package generator
 
 import (
@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -29,7 +28,7 @@ import (
 var logger = slog.With("subsystem", "generator")
 
 //go:embed prompts/system.md
-var systemPrompt string
+var systemTemplate string
 
 //go:embed prompts/planner.md
 var plannerPrompt string
@@ -37,27 +36,30 @@ var plannerPrompt string
 //go:embed prompts/retry.md
 var retryTemplate string
 
-// allowedImports are the only modules a generated component may require.
-// Everything in here must be provided by the app's require shim.
-var allowedImports = map[string]bool{
-	"react":             true,
-	"react-native":      true,
-	"react/jsx-runtime": true,
+// Service generates and validates React Native apps from prompts.
+type Service struct {
+	client       llm.LLM
+	hermesc      string
+	tsc          string
+	vendorDir    string
+	systemPrompt string
+	externals    []string
+	ambient      []string
+	maxAttempts  int
 }
 
-var requireRe = regexp.MustCompile(`require\("([^"]+)"\)`)
-
-// Service generates and validates React Native components from prompts.
-type Service struct {
-	client      llm.LLM
-	hermesc     string
-	maxAttempts int
+// Command is one generation request: a fresh build (Prompt only), an edit
+// (Prompt + Files), or a runtime repair (Files + RuntimeError, Prompt optional).
+type Command struct {
+	Prompt       string
+	Files        []File
+	RuntimeError string
 }
 
 // Result is a successfully generated and compiled app.
 type Result struct {
-	// TSX is the source as the model wrote it, for display.
-	TSX string
+	// Files is the generated project as the model wrote it, for display and edits.
+	Files []File
 	// HBC is the Hermes bytecode the app evaluates on its runtime.
 	HBC []byte
 	// Brief is the design/architecture brief the planner produced, if any.
@@ -78,6 +80,12 @@ func New(cfg config.GeneratorConfig) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hermesc not found %q: %w", cfg.HermescPath, err)
 	}
+
+	sdk, err := loadHostSDK()
+	if err != nil {
+		return nil, err
+	}
+
 	client := llmanthropic.NewLLM(
 		llmanthropic.WithAPIKey(cfg.AnthropicAPIKey),
 		llmanthropic.WithModel(model.AnthropicModels[model.Claude45Haiku]),
@@ -86,23 +94,27 @@ func New(cfg config.GeneratorConfig) (*Service, error) {
 	)
 
 	return &Service{
-		client:      client,
-		hermesc:     hermesc,
-		maxAttempts: max(cfg.MaxAttempts, 1),
+		client:       client,
+		hermesc:      hermesc,
+		tsc:          findTSC(),
+		vendorDir:    findVendorDir(),
+		systemPrompt: renderSystemPrompt(sdk),
+		externals:    sdk.externals(),
+		ambient:      sdk.allModules(),
+		maxAttempts:  max(cfg.MaxAttempts, 1),
 	}, nil
 }
 
-// Generate runs the full pipeline for one prompt.
-func (s *Service) Generate(ctx context.Context, userPrompt, currentCode string) (*Result, error) {
+// Generate runs the full pipeline for one command.
+func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 	logger.InfoContext(ctx, "generation started",
-		"prompt", userPrompt, "edit", currentCode != "")
+		"prompt", cmd.Prompt, "edit", len(cmd.Files) > 0, "repair", cmd.RuntimeError != "")
 
 	var brief string
-	if currentCode == "" {
-		b, err := s.plan(ctx, userPrompt)
+	if len(cmd.Files) == 0 {
+		b, err := s.plan(ctx, cmd.Prompt)
 		if err != nil {
-			logger.WarnContext(ctx, "planning failed; building without a brief",
-				"err", err)
+			logger.WarnContext(ctx, "planning failed; building without a brief", "err", err)
 		} else {
 			brief = b
 			logger.InfoContext(ctx, "planning complete", "brief_chars", len(brief))
@@ -111,8 +123,8 @@ func (s *Service) Generate(ctx context.Context, userPrompt, currentCode string) 
 	}
 
 	msgs := []message.Message{
-		message.NewSystemMessage(systemPrompt),
-		message.NewUserMessage(buildUserMessage(userPrompt, currentCode, brief)),
+		message.NewSystemMessage(s.systemPrompt),
+		message.NewUserMessage(buildUserMessage(cmd, brief)),
 	}
 
 	var lastErr error
@@ -123,25 +135,26 @@ func (s *Service) Generate(ctx context.Context, userPrompt, currentCode string) 
 			return nil, fmt.Errorf("llm call: %w", err)
 		}
 
-		tsx := stripFences(resp.Content)
-		logger.InfoContext(ctx, "model responded",
-			"attempt", attempt,
-			"input_tokens", resp.Usage.InputTokens,
-			"output_tokens", resp.Usage.OutputTokens,
-			"finish_reason", resp.FinishReason,
-			"tsx_chars", len(tsx),
-		)
-		logger.DebugContext(ctx, "model output", "attempt", attempt, "tsx", tsx)
-
-		hbc, buildErr := s.compile(ctx, tsx)
+		files, buildErr := parseFileMap(resp.Content)
+		var hbc []byte
+		if buildErr == nil {
+			logger.InfoContext(ctx, "model responded",
+				"attempt", attempt,
+				"input_tokens", resp.Usage.InputTokens,
+				"output_tokens", resp.Usage.OutputTokens,
+				"finish_reason", resp.FinishReason,
+				"files", len(files),
+			)
+			hbc, buildErr = s.compile(ctx, files)
+		}
 		if buildErr == nil {
 			logger.InfoContext(ctx, "generation succeeded",
-				"attempt", attempt, "tsx_chars", len(tsx), "hbc_bytes", len(hbc))
-			return &Result{TSX: tsx, HBC: hbc, Brief: brief, Attempts: attempt}, nil
+				"attempt", attempt, "files", len(files), "hbc_bytes", len(hbc))
+			return &Result{Files: files, HBC: hbc, Brief: brief, Attempts: attempt}, nil
 		}
 
-		logger.WarnContext(ctx, "generated code failed to compile",
-			"attempt", attempt, "err", buildErr, "tsx", tsx)
+		logger.WarnContext(ctx, "generated app failed to build",
+			"attempt", attempt, "err", buildErr)
 		lastErr = buildErr
 
 		retry, err := renderRetry(buildErr)
@@ -157,7 +170,7 @@ func (s *Service) Generate(ctx context.Context, userPrompt, currentCode string) 
 		"attempts", s.maxAttempts, "err", lastErr)
 
 	return nil, fmt.Errorf(
-		"generated code failed to compile after %d attempts: %w",
+		"generated app failed to build after %d attempts: %w",
 		s.maxAttempts, lastErr,
 	)
 }
@@ -181,50 +194,101 @@ func (s *Service) plan(ctx context.Context, userPrompt string) (string, error) {
 	return brief, nil
 }
 
-// buildUserMessage frames a fresh build as the prompt (optionally with a design
-// brief to follow), or an edit as the current component plus the requested
-// change.
-func buildUserMessage(prompt, currentCode, brief string) string {
-	if currentCode != "" {
-		return "Here is the current component:\n\n```tsx\n" + currentCode +
-			"\n```\n\nApply this change and return the COMPLETE updated component, " +
-			"following all the same rules:\n\n" + prompt
+// buildUserMessage frames a runtime repair (current project crashed with an
+// error), an edit (current project plus a requested change), or a fresh build
+// (the prompt, optionally guided by a design brief).
+func buildUserMessage(cmd Command, brief string) string {
+	if cmd.RuntimeError != "" && len(cmd.Files) > 0 {
+		msg := "The current project below built successfully but CRASHED AT RUNTIME on the " +
+			"device with the error:\n\n" + cmd.RuntimeError + "\n\n" +
+			"Diagnose the root cause, fix the bug, and return the COMPLETE updated project " +
+			"as a file map, following all the same rules. Do not just guard the symptom — " +
+			"remove the actual cause (e.g. calling a non-function, reading a property of " +
+			"undefined, a bad hook usage)."
+		if strings.TrimSpace(cmd.Prompt) != "" {
+			msg += "\n\nAlso keep this in mind: " + cmd.Prompt
+		}
+		return msg + "\n\n" + renderFileMap(cmd.Files)
+	}
+	if len(cmd.Files) > 0 {
+		return "Here is the current project:\n\n" + renderFileMap(cmd.Files) +
+			"\n\nApply this change and return the COMPLETE updated project as a file map, " +
+			"following all the same rules:\n\n" + cmd.Prompt
 	}
 	if brief != "" {
-		return "Build this app: " + prompt + "\n\n" +
+		return "Build this app: " + cmd.Prompt + "\n\n" +
 			"A designer has produced the build brief below. Follow it faithfully — " +
 			"honor the concept, aesthetic, data source, and layout it specifies, " +
 			"refining details only where they improve the result:\n\n" + brief
 	}
-	return prompt
+	return cmd.Prompt
 }
 
-// renderRetry fills the retry template with the compiler output.
+// renderRetry fills the retry template with the build output.
 func renderRetry(buildErr error) (string, error) {
 	return prompt.Process(retryTemplate, map[string]any{
 		"errors": buildErr.Error(),
 	})
 }
 
-// compile lowers TSX to CommonJS, enforces the import allowlist, then compiles
-// it to Hermes bytecode the app evaluates directly on its runtime.
-func (s *Service) compile(ctx context.Context, tsx string) ([]byte, error) {
-	res := api.Transform(tsx, api.TransformOptions{
-		Loader:     api.LoaderTSX,
-		Format:     api.FormatCommonJS,
-		Target:     api.ES2017,
-		JSX:        api.JSXAutomatic,
-		Sourcefile: "app.tsx",
-	})
-	if len(res.Errors) > 0 {
-		return nil, errors.New(formatEsbuildErrors(res.Errors))
-	}
-	js := string(res.Code)
+// renderSystemPrompt injects the host SDK surface into the system prompt.
+func renderSystemPrompt(sdk *hostSDK) string {
+	return strings.ReplaceAll(systemTemplate, "{{HOST_SDK}}", sdk.docs())
+}
 
-	if err := checkImports(js); err != nil {
+// compile writes the project to a temp dir, bundles it with esbuild (host
+// modules external, vendored deps inlined), type-checks it, then compiles the
+// bundle to Hermes bytecode the app evaluates directly on its runtime.
+func (s *Service) compile(ctx context.Context, files []File) ([]byte, error) {
+	entry := entryPoint(files)
+	if entry == "" {
+		return nil, errors.New("project is missing an App.tsx entry point with a default export")
+	}
+
+	dir, err := os.MkdirTemp("", "vibe-build-*")
+	if err != nil {
+		return nil, fmt.Errorf("build: %w", err)
+	}
+	defer os.RemoveAll(dir)
+
+	for _, f := range files {
+		dst := filepath.Join(dir, filepath.FromSlash(f.Path))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return nil, fmt.Errorf("build: %w", err)
+		}
+		if err := os.WriteFile(dst, []byte(f.Content), 0o600); err != nil {
+			return nil, fmt.Errorf("build: %w", err)
+		}
+	}
+
+	opts := api.BuildOptions{
+		EntryPoints:   []string{filepath.Join(dir, filepath.FromSlash(entry))},
+		AbsWorkingDir: dir,
+		Bundle:        true,
+		Format:        api.FormatCommonJS,
+		Target:        api.ES2017,
+		JSX:           api.JSXAutomatic,
+		External:      s.externals,
+		Write:         false,
+		LogLevel:      api.LogLevelSilent,
+	}
+	if s.vendorDir != "" {
+		opts.NodePaths = []string{s.vendorDir}
+	}
+
+	res := api.Build(opts)
+	if len(res.Errors) > 0 {
+		return nil, errors.New(formatEsbuildErrors(res.Errors, dir))
+	}
+	if len(res.OutputFiles) == 0 {
+		return nil, errors.New("esbuild produced no output")
+	}
+
+	if err := s.typecheck(ctx, dir, entry); err != nil {
 		return nil, err
 	}
-	return s.emitBytecode(ctx, wrapForBytecode(js))
+
+	return s.emitBytecode(ctx, wrapForBytecode(string(res.OutputFiles[0].Contents)))
 }
 
 // wrapForBytecode adapts esbuild's CommonJS output to Hermes' global scope:
@@ -237,23 +301,6 @@ func wrapForBytecode(cjs string) string {
 		cjs + "\n" +
 		"globalThis.__VIBE_APP=module.exports.default||module.exports;\n" +
 		"})();"
-}
-
-// checkImports rejects modules the app cannot provide.
-func checkImports(js string) error {
-	var bad []string
-	for _, m := range requireRe.FindAllStringSubmatch(js, -1) {
-		if !allowedImports[m[1]] {
-			bad = append(bad, m[1])
-		}
-	}
-	if len(bad) > 0 {
-		return fmt.Errorf(
-			"app.tsx: forbidden import(s) %s — only \"react\" and \"react-native\" exist",
-			strings.Join(bad, ", "),
-		)
-	}
-	return nil
 }
 
 // emitBytecode compiles the JS to a Hermes bytecode bundle with hermesc and
@@ -297,15 +344,16 @@ func stripFences(content string) string {
 	return strings.TrimSpace(code)
 }
 
-func formatEsbuildErrors(errs []api.Message) string {
+func formatEsbuildErrors(errs []api.Message, dir string) string {
 	var b strings.Builder
 	for i, e := range errs {
 		if i > 0 {
 			b.WriteString("\n")
 		}
 		if e.Location != nil {
-			fmt.Fprintf(&b, "%s:%d:%d: %s",
-				e.Location.File, e.Location.Line, e.Location.Column, e.Text)
+			file := strings.TrimPrefix(e.Location.File, dir+string(filepath.Separator))
+			file = strings.TrimPrefix(file, dir+"/")
+			fmt.Fprintf(&b, "%s:%d:%d: %s", file, e.Location.Line, e.Location.Column, e.Text)
 			if e.Location.LineText != "" {
 				fmt.Fprintf(&b, "\n  %s", e.Location.LineText)
 			}

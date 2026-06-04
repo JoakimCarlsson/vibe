@@ -38,6 +38,7 @@ func NewServer(cfg config.Config, gen *generator.Service) *Server {
 
 	s.registerHealth()
 	s.registerGenerate()
+	s.registerEject()
 
 	r.HandleFunc(http.MethodGet, "/openapi.json", specGen.Handler(r))
 	registerDocs(r)

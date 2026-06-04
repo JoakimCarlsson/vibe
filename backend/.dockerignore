@@ -1,6 +1,7 @@
 go.work
 go.work.sum
 deps/
+jsdeps/node_modules
 .env
 *_test.go
 Dockerfile

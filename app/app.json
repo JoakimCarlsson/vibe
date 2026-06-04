@@ -44,6 +44,19 @@
             "usesCleartextTraffic": true
           }
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow VIBE-generated apps to access your photos.",
+          "cameraPermission": "Allow VIBE-generated apps to use the camera."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow VIBE-generated apps to use your location."
+        }
       ]
     ],
     "experiments": {

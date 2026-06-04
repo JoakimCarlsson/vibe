@@ -4,6 +4,11 @@ FROM node:22-bookworm-slim AS hermesc
 WORKDIR /h
 RUN npm install --no-save hermes-compiler@250829098.0.10
 
+FROM node:22-bookworm-slim AS jsdeps
+WORKDIR /jsdeps
+COPY jsdeps/package.json jsdeps/package-lock.json ./
+RUN npm ci --omit=dev
+
 FROM golang:1.26-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -17,6 +22,8 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/*
 COPY --from=hermesc /h/node_modules/hermes-compiler/hermesc/linux64-bin/hermesc /usr/local/bin/hermesc
 COPY --from=build /out/api /usr/local/bin/api
+COPY --from=jsdeps /jsdeps/node_modules /app/jsdeps/node_modules
+WORKDIR /app
 ENV HERMESC_PATH=hermesc
 EXPOSE 1337
 ENTRYPOINT ["api"]

@@ -1,0 +1,10 @@
+{
+  "name": "vibe-jsdeps",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Curated pure-JS libraries the generator bundles into generated apps.",
+  "dependencies": {
+    "date-fns": "^4.4.0",
+    "zustand": "^5.0.14"
+  }
+}

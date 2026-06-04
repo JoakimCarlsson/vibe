@@ -1,4 +1,4 @@
-Your component failed to compile. Fix it and respond with the complete corrected TSX file and NOTHING else — no explanation, no markdown fences.
+Your project failed to build. Fix the cause and respond with the COMPLETE updated project as a file map (the same `=== FILE: path ===` format), and NOTHING else — no explanation, no markdown fences.
 
-Compiler output:
+Build output (paths are relative to the project root):
 {{.errors}}

@@ -1,8 +1,13 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import React from 'react';
 import * as ReactNative from 'react-native';
 import * as JSXRuntime from 'react/jsx-runtime';
 
 import { evaluateBytecode } from '../../modules/vibe-hermes';
+import * as VibeRouter from './vibe-router';
 
 declare const globalThis: {
   __vibeRequire?: (name: string) => unknown;
@@ -13,6 +18,11 @@ const modules: Record<string, unknown> = {
   react: React,
   'react-native': ReactNative,
   'react/jsx-runtime': JSXRuntime,
+  '@vibe/router': VibeRouter,
+  '@react-native-async-storage/async-storage': AsyncStorage,
+  'expo-haptics': Haptics,
+  'expo-image-picker': ImagePicker,
+  'expo-location': Location,
 };
 
 globalThis.__vibeRequire = (name: string) => {
