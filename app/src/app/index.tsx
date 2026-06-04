@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
+  Dimensions,
   Easing,
   Keyboard,
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -11,7 +13,8 @@ import {
   View,
   useAnimatedValue,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 
 import { GeneratedApp } from '@/components/generated-app';
 import { API_URL } from '@/lib/api';
@@ -145,6 +148,111 @@ function LoadingView() {
       <Spark />
       <Text style={styles.status}>{status}</Text>
     </View>
+  );
+}
+
+/**
+ * The result-screen action button. A tap toggles the menu; a press-and-hold
+ * (~220ms, confirmed with a haptic) picks it up so it can be dragged anywhere,
+ * clamped to stay within the safe area.
+ */
+function MovableFab({
+  open,
+  onToggle,
+  onChat,
+  onReset,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onChat: () => void;
+  onReset: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const { width, height } = Dimensions.get('window');
+  const minX = -(width - 92);
+  const maxX = 0;
+  const minY = -(height - 150 - insets.top);
+  const maxY = 0;
+
+  const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const offset = useRef({ x: 0, y: 0 }).current;
+  const dragging = useRef(false);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+  const clearHold = () => {
+    if (holdTimer.current) {
+      clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+  };
+
+  const responder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => dragging.current,
+      onPanResponderGrant: () => {
+        holdTimer.current = setTimeout(() => {
+          dragging.current = true;
+          setIsDragging(true);
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+        }, 220);
+      },
+      onPanResponderMove: (_, g) => {
+        if (!dragging.current) {
+          // Finger moved before the hold registered: it's not a tap, so drop
+          // the pending pick-up rather than jumping the button.
+          if (Math.hypot(g.dx, g.dy) > 8) clearHold();
+          return;
+        }
+        pan.setValue({
+          x: clamp(offset.x + g.dx, minX, maxX),
+          y: clamp(offset.y + g.dy, minY, maxY),
+        });
+      },
+      onPanResponderRelease: (_, g) => {
+        clearHold();
+        if (dragging.current) {
+          offset.x = clamp(offset.x + g.dx, minX, maxX);
+          offset.y = clamp(offset.y + g.dy, minY, maxY);
+          dragging.current = false;
+          setIsDragging(false);
+        } else if (Math.hypot(g.dx, g.dy) < 8) {
+          onToggle();
+        }
+      },
+      onPanResponderTerminate: () => {
+        clearHold();
+        if (dragging.current) {
+          pan.setValue({ x: offset.x, y: offset.y });
+          dragging.current = false;
+          setIsDragging(false);
+        }
+      },
+    })
+  ).current;
+
+  return (
+    <Animated.View
+      style={[styles.fabWrap, { transform: pan.getTranslateTransform() }]}
+      pointerEvents="box-none">
+      {open && !isDragging && (
+        <View style={styles.fabMenu}>
+          <Pressable style={styles.fabItem} onPress={onChat}>
+            <Text style={styles.fabItemText}>✦  Keep chatting</Text>
+          </Pressable>
+          <Pressable style={styles.fabItem} onPress={onReset}>
+            <Text style={styles.fabItemText}>←  Go home</Text>
+          </Pressable>
+        </View>
+      )}
+      <Animated.View
+        {...responder.panHandlers}
+        style={[styles.fab, isDragging && styles.fabDragging]}>
+        <Text style={styles.fabIcon}>{open ? '×' : '◆'}</Text>
+      </Animated.View>
+    </Animated.View>
   );
 }
 
@@ -317,27 +425,16 @@ export default function VibeScreen() {
               </View>
             )}
 
-            <View style={styles.fabWrap} pointerEvents="box-none">
-              {fabOpen && (
-                <View style={styles.fabMenu}>
-                  <Pressable
-                    style={styles.fabItem}
-                    onPress={() => {
-                      setFabOpen(false);
-                      setChatting(true);
-                      setTimeout(() => chatRef.current?.focus(), 50);
-                    }}>
-                    <Text style={styles.fabItemText}>✦  Keep chatting</Text>
-                  </Pressable>
-                  <Pressable style={styles.fabItem} onPress={reset}>
-                    <Text style={styles.fabItemText}>←  Go home</Text>
-                  </Pressable>
-                </View>
-              )}
-              <Pressable style={styles.fab} onPress={() => setFabOpen((o) => !o)}>
-                <Text style={styles.fabIcon}>{fabOpen ? '×' : '◆'}</Text>
-              </Pressable>
-            </View>
+            <MovableFab
+              open={fabOpen}
+              onToggle={() => setFabOpen((o) => !o)}
+              onChat={() => {
+                setFabOpen(false);
+                setChatting(true);
+                setTimeout(() => chatRef.current?.focus(), 50);
+              }}
+              onReset={reset}
+            />
           </View>
         )}
       </SafeAreaView>
@@ -473,6 +570,13 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },
     elevation: 6,
+  },
+  fabDragging: {
+    backgroundColor: C.accentBright,
+    transform: [{ scale: 1.12 }],
+    shadowOpacity: 0.5,
+    shadowRadius: 14,
+    elevation: 10,
   },
   fabIcon: {
     fontFamily: fonts.serif,
