@@ -21,6 +21,7 @@ import (
 	"github.com/joakimcarlsson/ai/message"
 	"github.com/joakimcarlsson/ai/model"
 	"github.com/joakimcarlsson/ai/prompt"
+	"github.com/joakimcarlsson/ai/types"
 
 	"github.com/joakimcarlsson/vibe/internal/config"
 )
@@ -31,7 +32,7 @@ var logger = slog.With("subsystem", "generator")
 var systemTemplate string
 
 //go:embed prompts/planner.md
-var plannerPrompt string
+var plannerTemplate string
 
 //go:embed prompts/retry.md
 var retryTemplate string
@@ -42,10 +43,11 @@ type Service struct {
 	hermesc      string
 	tsc          string
 	vendorDir    string
-	systemPrompt string
-	externals    []string
-	ambient      []string
-	maxAttempts  int
+	systemPrompt  string
+	plannerPrompt string
+	externals     []string
+	ambient       []string
+	maxAttempts   int
 }
 
 // Command is one generation request: a fresh build (Prompt only), an edit
@@ -86,11 +88,22 @@ func New(cfg config.GeneratorConfig) (*Service, error) {
 		return nil, err
 	}
 
+	// Prod builds with Sonnet for stronger, larger apps; DEV trades that for
+	// Haiku's speed and cost during local iteration.
+	genModel, maxTokens := model.Claude46Sonnet, int64(32000)
+	if cfg.Dev {
+		genModel, maxTokens = model.Claude45Haiku, int64(16000)
+	}
+	logger.Info("generator model selected", "model", genModel, "max_tokens", maxTokens, "dev", cfg.Dev)
+
+	// Note: the request timeout is applied per-call in send() via the context,
+	// not via WithTimeout. StreamResponse sets up its timeout context with a
+	// `defer cancel()` that fires the moment it returns the channel, so a
+	// client-level timeout would cancel the stream immediately.
 	client := llmanthropic.NewLLM(
 		llmanthropic.WithAPIKey(cfg.AnthropicAPIKey),
-		llmanthropic.WithModel(model.AnthropicModels[model.Claude45Haiku]),
-		llmanthropic.WithMaxTokens(16000),
-		llmanthropic.WithTimeout(4*time.Minute),
+		llmanthropic.WithModel(model.AnthropicModels[genModel]),
+		llmanthropic.WithMaxTokens(maxTokens),
 	)
 
 	return &Service{
@@ -98,10 +111,11 @@ func New(cfg config.GeneratorConfig) (*Service, error) {
 		hermesc:      hermesc,
 		tsc:          findTSC(),
 		vendorDir:    findVendorDir(),
-		systemPrompt: renderSystemPrompt(sdk),
-		externals:    sdk.externals(),
-		ambient:      sdk.allModules(),
-		maxAttempts:  max(cfg.MaxAttempts, 1),
+		systemPrompt:  renderSystemPrompt(sdk),
+		plannerPrompt: renderPlannerPrompt(sdk),
+		externals:     sdk.externals(),
+		ambient:       sdk.allModules(),
+		maxAttempts:   max(cfg.MaxAttempts, 1),
 	}, nil
 }
 
@@ -129,7 +143,7 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 
 	var lastErr error
 	for attempt := 1; attempt <= s.maxAttempts; attempt++ {
-		resp, err := s.client.SendMessages(ctx, msgs, nil)
+		resp, err := s.send(ctx, msgs)
 		if err != nil {
 			logger.ErrorContext(ctx, "llm call failed", "attempt", attempt, "err", err)
 			return nil, fmt.Errorf("llm call: %w", err)
@@ -175,15 +189,47 @@ func (s *Service) Generate(ctx context.Context, cmd Command) (*Result, error) {
 	)
 }
 
+// generationTimeout bounds a single streamed completion. It is generous because
+// a full Sonnet generation at the configured token budget can take minutes.
+const generationTimeout = 10 * time.Minute
+
+// send streams a single completion and returns the full response once the
+// stream completes. Streaming is mandatory: the generator's token budget can
+// exceed the API's non-streaming 10-minute limit, which rejects the request
+// outright. The channel is drained to completion so the provider's stream
+// goroutine always finishes rather than leaking on an early return.
+func (s *Service) send(ctx context.Context, msgs []message.Message) (*llm.Response, error) {
+	ctx, cancel := context.WithTimeout(ctx, generationTimeout)
+	defer cancel()
+
+	var resp *llm.Response
+	var streamErr error
+	for evt := range s.client.StreamResponse(ctx, msgs, nil) {
+		switch evt.Type {
+		case types.EventComplete:
+			resp = evt.Response
+		case types.EventError:
+			streamErr = evt.Error
+		}
+	}
+	if streamErr != nil {
+		return nil, streamErr
+	}
+	if resp == nil {
+		return nil, errors.New("stream ended without a response")
+	}
+	return resp, nil
+}
+
 // plan runs the design pass: it turns the one-line idea into a concrete build
 // brief (concept, aesthetic, data source, layout, interactions) that the
 // code-gen pass then implements. Its failure is non-fatal — the caller falls
 // back to generating straight from the prompt.
 func (s *Service) plan(ctx context.Context, userPrompt string) (string, error) {
-	resp, err := s.client.SendMessages(ctx, []message.Message{
-		message.NewSystemMessage(plannerPrompt),
+	resp, err := s.send(ctx, []message.Message{
+		message.NewSystemMessage(s.plannerPrompt),
 		message.NewUserMessage(userPrompt),
-	}, nil)
+	})
 	if err != nil {
 		return "", fmt.Errorf("planner call: %w", err)
 	}
@@ -234,6 +280,12 @@ func renderRetry(buildErr error) (string, error) {
 // renderSystemPrompt injects the host SDK surface into the system prompt.
 func renderSystemPrompt(sdk *hostSDK) string {
 	return strings.ReplaceAll(systemTemplate, "{{HOST_SDK}}", sdk.docs())
+}
+
+// renderPlannerPrompt injects the host SDK surface into the planner prompt so
+// the design pass plans only around capabilities the engineer can actually build.
+func renderPlannerPrompt(sdk *hostSDK) string {
+	return strings.ReplaceAll(plannerTemplate, "{{HOST_SDK}}", sdk.docs())
 }
 
 // compile writes the project to a temp dir, bundles it with esbuild (host

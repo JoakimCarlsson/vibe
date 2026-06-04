@@ -92,10 +92,13 @@ const packageJSON = `{
     "expo-font": "~56.0.5",
     "expo-haptics": "~56.0.3",
     "expo-image-picker": "~56.0.15",
+    "expo-linear-gradient": "~56.0.4",
     "expo-location": "~56.0.15",
     "expo-status-bar": "~56.0.4",
+    "lucide-react-native": "^0.577.0",
     "react": "19.2.3",
     "react-native": "0.85.3",
+    "react-native-svg": "15.15.4",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

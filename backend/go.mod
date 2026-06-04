@@ -8,6 +8,8 @@ require (
 	github.com/joakimcarlsson/ai/llm/anthropic v0.2.2
 	github.com/joakimcarlsson/ai/message v0.2.0
 	github.com/joakimcarlsson/ai/model v0.3.0
+	github.com/joakimcarlsson/ai/prompt v0.1.0
+	github.com/joakimcarlsson/ai/types v0.1.0
 	github.com/joakimcarlsson/minmux/openapi v0.0.0-20260526035041-edc78fb41e31
 	github.com/joakimcarlsson/minmux/router v0.0.0-20260526035041-edc78fb41e31
 	github.com/joakimcarlsson/minmux/scalar v0.0.0-20260526035041-edc78fb41e31
@@ -49,11 +51,9 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
-	github.com/joakimcarlsson/ai/prompt v0.1.0 // indirect
 	github.com/joakimcarlsson/ai/schema v0.1.0 // indirect
 	github.com/joakimcarlsson/ai/tool v0.1.0 // indirect
 	github.com/joakimcarlsson/ai/tracing v0.1.0 // indirect
-	github.com/joakimcarlsson/ai/types v0.1.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/modelcontextprotocol/go-sdk v1.6.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
