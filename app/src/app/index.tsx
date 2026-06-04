@@ -131,9 +131,10 @@ function LoadingView() {
   }, []);
   return (
     <View style={styles.loading}>
-      <Text style={styles.anvil}>
-        vibing<Text style={{ color: C.accent }}>{dots}</Text>
-      </Text>
+      <View style={styles.vibingRow}>
+        <Text style={styles.anvil}>vibing</Text>
+        <Text style={[styles.anvil, styles.dots]}>{dots}</Text>
+      </View>
       <Spark />
       <Text style={styles.status}>{status}</Text>
     </View>
@@ -371,11 +372,13 @@ const styles = StyleSheet.create({
     gap: 22,
     padding: 24,
   },
+  vibingRow: { flexDirection: 'row' },
   anvil: {
     fontFamily: fonts.serif,
     fontSize: 24,
     color: C.ink,
   },
+  dots: { color: C.accent, width: 28, textAlign: 'left' },
   spark: {
     width: 200,
     height: 3,
